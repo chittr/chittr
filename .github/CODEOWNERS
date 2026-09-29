@@ -1,0 +1,7 @@
+# Bill is the sole accountable maintainer, reviewer and publisher of this project.
+# There is no second maintainer and no team. Every path is owned by this account.
+#
+# Review requirements and any branch protection that consumes this file are configured
+# separately; listing an owner here does not by itself require or grant an approval.
+
+* @mcgloneb

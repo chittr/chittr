@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/chittr/chittr/security/advisories/new
+    about: Report privately through GitHub. Never open a public issue for a vulnerability — see SECURITY.md.
+  - name: Getting help
+    url: https://github.com/chittr/chittr/blob/main/SUPPORT.md
+    about: What support looks like here, and what to read before asking.
+  - name: Code of conduct
+    url: https://github.com/chittr/chittr/blob/main/CODE_OF_CONDUCT.md
+    about: Report conduct concerns privately, not as a public issue.

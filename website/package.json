@@ -1,0 +1,11 @@
+{
+  "name": "chittr-website",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check script.js && node --check scripts/build.mjs"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

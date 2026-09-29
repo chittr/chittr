@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest something AI Chat should do.
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a one-person pilot with a deliberately narrow scope. Check
+        [the roadmap](https://github.com/mcgloneb/ai-chat/blob/main/docs/roadmap.md) and
+        [FEATURES.md](https://github.com/mcgloneb/ai-chat/blob/main/FEATURES.md) first.
+        Most requests are declined or parked; that is not a comment on the idea.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that AI Chat makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you want it to do
+      description: Describe the behaviour, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have tried instead
+      description: Existing commands, configuration or workarounds, and why they fall short.
+  - type: dropdown
+    id: contributing
+    attributes:
+      label: Would you be willing to implement this?
+      description: Not required, and not a condition of acceptance.
+      options:
+        - 'Yes, if the direction is agreed'
+        - 'Maybe, with guidance'
+        - 'No'
+    validations:
+      required: true

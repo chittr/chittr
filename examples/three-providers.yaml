@@ -1,0 +1,19 @@
+version: 1
+human:
+  name: Your name
+skills:
+  enabled: true
+permissions:
+  edits: false
+  commands: false
+  network: false
+agents:
+  codex:
+    provider: codex
+  claude:
+    provider: claude
+  grok:
+    provider: grok
+    instructions:
+      sources:
+        - text: Inspect relevant files before making concrete claims.

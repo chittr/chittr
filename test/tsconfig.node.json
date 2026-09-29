@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "allowJs": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["browser", "composer.test.ts", "attachment-draft.test.ts"]
+}

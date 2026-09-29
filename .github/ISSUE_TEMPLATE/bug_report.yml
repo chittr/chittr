@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in AI Chat does not work the way it is documented.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form for a security vulnerability — report it privately through
+        [SECURITY.md](https://github.com/mcgloneb/ai-chat/blob/main/SECURITY.md).
+
+        Please check [known limits](https://github.com/mcgloneb/ai-chat/blob/main/docs/compatibility.md)
+        first; several provider behaviours are documented as unsupported in this preview.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        I sent an image to Grok in the restricted room and expected delivery to be attempted.
+        The message was not delivered and the status said ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. Include the exact commands.
+      placeholder: |
+        1. cd ~/Projects/example
+        2. ai-chat --web
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `ai-chat doctor`
+      description: >-
+        Run `ai-chat doctor` and paste the output. It reports CLI compatibility,
+        authentication and the tool sandbox without making a model call. Remove anything
+        you consider private before pasting.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AI Chat version or commit
+      description: The `version` field from `package.json`, or the commit you are running.
+      placeholder: 0.1.0 (commit 3315488)
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: macOS and Node versions
+      description: Output of `sw_vers -productVersion`, `uname -m` and `node --version`.
+      placeholder: macOS 26.6.2, arm64, Node 22.12.0
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - Terminal
+        - Browser
+        - Both
+        - Not interface-specific
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: >-
+        The parts of your `ai-chat.yaml` that matter — enabled agents, permissions, skills,
+        command mode. Remove instruction text and anything private.
+      render: yaml
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am running on macOS on Apple Silicon with Node.js 22.12 or newer.
+          required: true
+        - label: I checked the documented known limits and this is not one of them.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

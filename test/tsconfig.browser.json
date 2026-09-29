@@ -1,0 +1,7 @@
+{
+  "extends": "../web/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"]
+  },
+  "include": ["browser/**/*.ts", "composer.test.ts", "attachment-draft.test.ts"]
+}

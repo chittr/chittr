@@ -1,0 +1,17 @@
+# Example only. Choose your own fallback participants.
+version: 1
+human:
+  name: Your name
+skills:
+  enabled: true
+conversation:
+  follow_up_turns: 8
+permissions:
+  edits: false
+  commands: false
+  network: false
+defaultAgents:
+  codex:
+    provider: codex
+  claude:
+    provider: claude

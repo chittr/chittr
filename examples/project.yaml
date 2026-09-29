@@ -1,0 +1,18 @@
+# This project uses only these participants, replacing the user fallback roster.
+version: 1
+agents:
+  codex:
+    provider: codex
+    instructions:
+      sources:
+        - text: Focus on this project's implementation and correctness.
+  claude:
+    provider: claude
+    instructions:
+      sources:
+        - text: Focus on user experience and operational failure cases.
+# To add an instruction file, paths are relative to this config file:
+#        - file: instructions/review.md
+# A grant applies to every participant:
+# permissions:
+#   edits: true

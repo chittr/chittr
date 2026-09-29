@@ -1,0 +1,7 @@
+# Curated source exports for the first public preview. Keep private originals in Git.
+/.agents export-ignore
+/.claude export-ignore
+/PILOT_PLAN.md export-ignore
+/docs/evidence export-ignore
+/.github/workflows/quality.yml export-ignore
+/.github/dependabot.yml export-ignore

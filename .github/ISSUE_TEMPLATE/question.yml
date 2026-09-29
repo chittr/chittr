@@ -1,0 +1,20 @@
+name: Question
+description: Ask how something works or whether behaviour is intended.
+labels: ['question']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read [SUPPORT.md](https://github.com/mcgloneb/ai-chat/blob/main/SUPPORT.md)
+        first. Support here is best-effort with no response-time commitment.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What you have already read or tried
+      description: Which documentation you checked, and what `ai-chat doctor` reported if relevant.

@@ -1,0 +1,82 @@
+{
+  "name": "@chittr/cli",
+  "version": "0.1.0",
+  "description": "A local terminal and browser conversation with subscription-backed CLI agents",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "chittr": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/web/index.html",
+    "dist/web/favicon.svg",
+    "dist/web/assets/*.css",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "PRIVACY.md",
+    "README.md",
+    "docs/installation.md",
+    "examples/user.yaml",
+    "examples/project.yaml",
+    "examples/three-providers.yaml"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "check": "tsc --noEmit -p tsconfig.json && tsc -p web/tsconfig.json",
+    "check:tests": "tsc -p test/tsconfig.node.json && tsc -p test/tsconfig.browser.json",
+    "test": "vitest run",
+    "test:live": "tsx scripts/live-probe.ts",
+    "test:skills:live": "tsx scripts/live-skills.ts",
+    "predev": "npm run build",
+    "test:terminal": "python3 scripts/terminal-probe.py",
+    "test:resume": "python3 scripts/resume-probe.py",
+    "test:security": "node scripts/security-probe.mjs",
+    "test:trusted": "tsx scripts/live-trusted.ts",
+    "test:room": "tsx scripts/live-room.ts",
+    "format": "prettier --write . --ignore-path .gitignore",
+    "format:check": "prettier --check . --ignore-path .gitignore",
+    "test:interrupt": "tsx scripts/live-interrupt.ts",
+    "test:web": "playwright test",
+    "test:compaction": "tsx scripts/live-compaction.ts",
+    "browser:install": "playwright install chromium",
+    "quality": "npm run check && npm run build && npm run check:tests && npm test && npm run format:check && npm run test:web && npm run test:terminal && npm run test:resume && npm run test:security && npm --prefix website run check && npm --prefix website run build",
+    "prepack": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "string-width": "^8.2.2",
+    "strip-ansi": "^7.2.0",
+    "wrap-ansi": "^10.0.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.5.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chittr/chittr.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chittr/chittr/issues"
+  },
+  "homepage": "https://github.com/chittr/chittr#readme",
+  "license": "MIT"
+}

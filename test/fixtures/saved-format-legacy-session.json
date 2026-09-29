@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "id": "9f1c7a52-4b3e-4f6a-9d21-6f0c4a2b8e17",
+  "workspace": "/fixtures/ai-chat/saved-format",
+  "createdAt": "2026-02-01T09:00:00.000Z",
+  "updatedAt": "2026-02-01T09:15:00.000Z",
+  "paused": false,
+  "composerDraft": "",
+  "configSources": [],
+  "permissions": { "edits": false, "commands": false, "network": false },
+  "notices": [],
+  "exchanges": { "m1": { "used": 1, "allowance": 8 } },
+  "agents": {
+    "claude": {
+      "id": "claude",
+      "connection": "unavailable",
+      "activity": "available",
+      "paused": false,
+      "fingerprint": "claude:fixture",
+      "contextThrough": 3,
+      "draft": "",
+      "sessionId": "provider-session-fixture"
+    }
+  },
+  "messages": [
+    {
+      "id": "m1",
+      "sequence": 1,
+      "author": "human",
+      "text": "Plan the storage migration",
+      "createdAt": "2026-02-01T09:01:00.000Z",
+      "recipients": ["claude"],
+      "replyTo": [],
+      "roots": ["m1"],
+      "deliveries": { "claude": { "status": "contributed" } }
+    },
+    {
+      "id": "m2",
+      "sequence": 2,
+      "author": "claude",
+      "text": "Which store should keep the pilot data?",
+      "createdAt": "2026-02-01T09:02:00.000Z",
+      "recipients": ["human"],
+      "replyTo": ["m1"],
+      "roots": ["m1"],
+      "deliveries": {},
+      "question": { "choices": ["Keep the existing store", "Start a new store"] }
+    },
+    {
+      "id": "m3",
+      "sequence": 3,
+      "author": "human",
+      "text": "Keep the existing store",
+      "createdAt": "2026-02-01T09:03:00.000Z",
+      "recipients": ["claude"],
+      "replyTo": ["m2"],
+      "roots": ["m1"],
+      "deliveries": { "claude": { "status": "queued" } }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+name: Documentation problem
+description: Something in the documentation is wrong, missing or misleading.
+labels: ['documentation']
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Where
+      description: The file and, if you can, the heading or line.
+      placeholder: docs/quality.md, "Fresh checkout"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong
+      description: >-
+        What it says, and what is actually true. If the documentation claims behaviour the
+        software does not have, say which you observed.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording
+      description: Optional. A concrete replacement is the fastest route to a fix.
