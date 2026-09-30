@@ -46,12 +46,10 @@ child sandboxes; an outer sandbox denial is not a passing result.
 | `npm run test:terminal`          | Terminal input/display through a Python PTY                    |
 | `npm run test:resume`            | CLI startup/history/resume with providers disabled             |
 | `npm run test:security`          | Native macOS file, command, network, skill and MCP enforcement |
-| `npm --prefix website run check` | Website JavaScript syntax                                      |
-| `npm --prefix website run build` | Separate website build                                         |
 
 `npm run quality` runs these in the order shown and stops at the first failure.
 Build before typechecking or running tests that import or launch `dist/` workers.
-The website has no separate dependency installation.
+The public website has its own build in [chittr/chittr.dev](https://github.com/chittr/chittr.dev).
 
 ## Deferred coverage
 

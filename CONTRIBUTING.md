@@ -74,7 +74,7 @@ npm run quality
 
 `npm run quality` runs type checks, the build, the deterministic Vitest suite,
 formatting, the browser suite in bundled Chromium, the terminal and resume PTY probes,
-the native macOS security probes and the website check, stopping at the first failure.
+and the native macOS security probes, stopping at the first failure.
 [docs/quality.md](docs/quality.md) lists each command, what it covers and its
 prerequisites. While iterating, run the focused command the relevant maintenance guide
 names instead of the whole suite.

@@ -44,8 +44,8 @@ exact transcript.
 - `Persistence` keeps the synchronous save boundary explicit. Provider state
   supplements the saved public conversation; saved permissions never authorize
   the current process.
-- `web/` is the browser UI shipped with the CLI. `website/` is the separate
-  public website, with its own package and build.
+- `web/` is the browser UI shipped with the CLI. The separate public website
+  lives in [chittr/chittr.dev](https://github.com/chittr/chittr.dev).
 
 These record existing choices. They do not require a new command registry,
 controller encapsulation, a shared adapter base class or a storage redesign.
