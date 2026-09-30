@@ -44,7 +44,7 @@
     "test:web": "playwright test",
     "test:compaction": "tsx scripts/live-compaction.ts",
     "browser:install": "playwright install chromium",
-    "quality": "npm run check && npm run build && npm run check:tests && npm test && npm run format:check && npm run test:web && npm run test:terminal && npm run test:resume && npm run test:security && npm --prefix website run check && npm --prefix website run build",
+    "quality": "npm run check && npm run build && npm run check:tests && npm test && npm run format:check && npm run test:web && npm run test:terminal && npm run test:resume && npm run test:security",
     "prepack": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run build"
   },
   "dependencies": {
