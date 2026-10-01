@@ -2194,17 +2194,30 @@ test('images: the browser converts and shrinks images and passes host-ready PNGs
   const shrunk = (await attachmentNamed(page, 'noise.png'))!;
   expect(shrunk.byteSize).toBeLessThanOrEqual(3 * 1024 * 1024);
   expect(shrunk.width).toBeLessThan(2000);
-  await loadedImages(page, '.draft-images img', 5);
+  // Browsers ignore bytes after IEND; the host does not, so the PNG is re-encoded.
+  const trailing = Buffer.concat([solidPng(10, 10), Buffer.from('trailing')]);
+  await imageInput(page).setInputFiles(imageFile('trailing.png', trailing));
+  await expect.poll(() => attachmentNamed(page, 'trailing.png')).toBeDefined();
+  const cleaned = (await attachmentNamed(page, 'trailing.png'))!;
+  expect(cleaned).toMatchObject({ width: 10, height: 10 });
+  expect((await hostBytes(page, cleaned.id)).equals(trailing)).toBe(false);
+  await loadedImages(page, '.draft-images img', 6);
   const before = uploads.length;
-  await imageInput(page).setInputFiles({
-    name: 'broken.png',
-    mimeType: 'image/png',
-    buffer: Buffer.from('not an image'),
-  });
-  await expect(draftImages(page)).toContainText('This file could not be read as an image.');
+  // Neither arbitrary bytes nor a PNG with an intact header and no image data
+  // decode, so neither is uploaded.
+  await imageInput(page).setInputFiles([
+    { name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not an image') },
+    { name: 'truncated.png', mimeType: 'image/png', buffer: tinyPng().subarray(0, 33) },
+  ]);
+  for (const name of ['broken.png', 'truncated.png'])
+    await expect(draftImages(page).locator('.upload-item').filter({ hasText: name })).toContainText(
+      'This file could not be read as an image.',
+    );
   expect(uploads.length).toBe(before);
   expect(uploads).not.toContain('broken.png');
+  expect(uploads).not.toContain('truncated.png');
   await page.getByRole('button', { name: 'Remove image broken.png' }).click();
+  await page.getByRole('button', { name: 'Remove image truncated.png' }).click();
   await messageInput(page).press('Enter');
   await expect(messageInput(page)).toHaveValue('');
   expect((await state(page)).session.messages[0]!.attachments!.map((a) => a.filename)).toEqual([
@@ -2213,6 +2226,7 @@ test('images: the browser converts and shrinks images and passes host-ready PNGs
     'ready.png',
     'interlaced.png',
     'noise.png',
+    'trailing.png',
   ]);
 });
 

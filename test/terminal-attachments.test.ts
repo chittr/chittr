@@ -27,7 +27,7 @@ import { transcript } from '../src/ui/terminal.js';
 import { projectRoom } from '../src/snapshot.js';
 import { complete } from '../src/completion.js';
 import { readClipboardImage } from '../src/ui/clipboard.js';
-import { tinyPng } from './image-fixture.js';
+import { paddedPng, tinyPng } from './image-fixture.js';
 
 vi.mock('node:fs/promises', { spy: true });
 
@@ -170,15 +170,32 @@ it('rejects missing, unreadable, nonregular, malformed and over-limit sources wi
   const room = controller.room;
   room.saveDraft('keep caption');
   writeFileSync(join(workspace, 'bad.png'), 'not png');
-  writeFileSync(join(workspace, 'huge.png'), Buffer.alloc(1024 * 1024 + 1));
+  // A complete, valid PNG one byte over the per-image limit.
+  writeFileSync(join(workspace, 'huge.png'), paddedPng(3 * 1024 * 1024 + 1));
   execFileSync('/usr/bin/mkfifo', [join(workspace, 'pipe')]);
-  for (const path of ['missing', '.', 'pipe', 'bad.png', 'huge.png'])
+  for (const path of ['missing', '.', 'pipe', 'bad.png'])
     await expect(terminal.action('/attach ' + path, room)).rejects.toThrow();
+  await expect(terminal.action('/attach huge.png', room)).rejects.toThrow(
+    'Image exceeds the 3 MiB per-image limit.',
+  );
   const denied = Object.assign(new Error('secret path'), { code: 'EACCES' });
   vi.spyOn(fs, 'open').mockRejectedValueOnce(denied);
   await expect(readAttachmentPath(file(), workspace)).rejects.toThrow('EACCES');
   expect(room.session.composerAttachments ?? []).toEqual([]);
   expect(room.session.composerDraft).toBe('keep caption');
+});
+
+it('stages a PNG of exactly the 3 MiB per-image limit through /attach', async () => {
+  const largest = paddedPng(3 * 1024 * 1024);
+  expect(largest.length).toBe(3_145_728);
+  writeFileSync(join(workspace, 'largest.png'), largest);
+  const read = await readAttachmentPath('largest.png', workspace);
+  expect(read.bytes.equals(largest)).toBe(true);
+  const room = controller.room;
+  await expect(terminal.action('/attach largest.png', room)).resolves.toContain('3145728 bytes');
+  expect(room.session.composerAttachments).toEqual([
+    expect.objectContaining({ filename: 'largest.png', byteSize: 3_145_728 }),
+  ]);
 });
 
 it('bounds growing reads, detects replacement, and closes the selected handle on error and cancellation', async () => {
