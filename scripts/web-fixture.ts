@@ -28,6 +28,16 @@ defaultAgents:
 );
 const config = loadConfig(workspace, home)!;
 const adapter = (id: string): AgentAdapter => ({
+  // Claude can take images, as a connected default room reports; Codex has no route here.
+  ...(id === 'claude'
+    ? {
+        imageSupport: () => ({
+          provider: 'claude' as const,
+          initial: { available: true as const, status: 'available' as const },
+          retrieval: { available: true as const, status: 'available' as const },
+        }),
+      }
+    : {}),
   async start() {
     return { sessionId: 'fixture-' + id, restored: false };
   },

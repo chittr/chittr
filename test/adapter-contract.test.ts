@@ -203,18 +203,11 @@ async function lifecycle(
   await adapter.close();
   await adapter.close();
 }
-async function warm(adapter: AgentAdapter, wire: Wire, input: TurnInput) {
-  const run = adapter.run(input, () => {}, new AbortController().signal);
-  await Promise.resolve();
-  wire.complete();
-  await run;
-}
 async function connected(provider: Provider, f: Fixture) {
   const adapter = make(provider, f);
   await adapter.start();
   const wire = wires.at(-1)!;
   const tools = services.at(-1)!;
-  if (provider === 'claude') await warm(adapter, wire, f.input);
   return { adapter, wire, tools };
 }
 async function mcp(wire: Wire) {
@@ -436,14 +429,12 @@ describe.each(providers)('%s adapter contract', (provider) => {
         retrieval: { available: false },
       });
     if (provider === 'claude') {
+      // Claude's images do not depend on a successful turn, so an abort keeps them.
       const abort = new AbortController();
       const run = x.adapter.run(f.input, () => {}, abort.signal);
       abort.abort();
       await expect(run).rejects.toThrow('Interrupted');
-      expect(x.adapter.imageSupport!()).toMatchObject({
-        initial: { status: 'not_observed' },
-        retrieval: { status: 'not_observed' },
-      });
+      expect(x.adapter.imageSupport!()).toEqual(before);
     }
     await x.adapter.close();
     expect(x.adapter.imageSupport!()).toMatchObject({
@@ -463,10 +454,6 @@ describe.each(providers)('%s adapter contract', (provider) => {
     expect(next.imageSupport!().initial.available).toBe(false);
     await next.start();
     const wire = wires.at(-1)!;
-    if (provider === 'claude') {
-      expect(next.imageSupport!().initial.status).toBe('not_observed');
-      await warm(next, wire, f.input);
-    }
     expect(next.imageSupport!().initial.available).toBe(provider !== 'antigravity');
     expect(register).toHaveBeenCalled();
     const turn = next.run(f.input, () => {}, new AbortController().signal);

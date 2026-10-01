@@ -198,8 +198,10 @@ it('bounds growing reads, detects replacement, and closes the selected handle on
     }) as unknown as typeof handle.read;
     return handle;
   });
-  await expect(readAttachmentPath(path, workspace)).rejects.toThrow('1 MiB');
-  expect(total).toBe(1024 * 1024 + 1);
+  await expect(readAttachmentPath(path, workspace)).rejects.toThrow(
+    'Image exceeds the 3 MiB per-image limit.',
+  );
+  expect(total).toBe(3 * 1024 * 1024 + 1);
   expect(close).toHaveBeenCalledOnce();
   vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
     const handle = await realOpen(...args);

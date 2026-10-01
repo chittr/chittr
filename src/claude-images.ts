@@ -7,10 +7,11 @@ import {
   type AttachmentAccess,
 } from './attachments.js';
 import type { Message } from './types.js';
+import { providerEventBytes } from './process.js';
 
 export const nativeEnvelopeHeadroom = 256 * 1024;
 
-/** UTF-8 bytes conservatively bound the reader's JavaScript character count.
+/** UTF-8 bytes are what the provider reader bounds.
  * Claude replays initial content once and MCP image results twice. Counting a
  * JSON-string-escaped copy too bounds text/metadata re-encoding in that replay.
  * The installed representation and envelope allowance require exact-build evidence.
@@ -18,7 +19,7 @@ export const nativeEnvelopeHeadroom = 256 * 1024;
 export function assertClaudeFrame(value: unknown, copies: 1 | 2): void {
   const json = JSON.stringify(value);
   const size = Math.max(Buffer.byteLength(json), Buffer.byteLength(JSON.stringify(json)));
-  if (copies * size + nativeEnvelopeHeadroom > attachmentLimits.nativeFrameCharacters)
+  if (copies * size + nativeEnvelopeHeadroom > providerEventBytes)
     throw new AttachmentError(
       'attachment-limit',
       'Claude image frame or replay exceeds the transport limit',

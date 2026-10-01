@@ -20,7 +20,7 @@ import { Room } from '../src/room.js';
 import { WebUI } from '../src/web.js';
 import { complete } from '../src/completion.js';
 import type { RoomConfig } from '../src/types.js';
-import { alternatePng, tinyPng } from './image-fixture.js';
+import { alternatePng, paddedPng, tinyPng } from './image-fixture.js';
 
 // These HTTP tests assert response shapes at runtime, including malformed requests.
 // JSON.parse keeps the wire payload dynamic instead of claiming a validated server type.
@@ -524,7 +524,10 @@ it('rejects unauthenticated, cross-session, malformed, mismatched, and oversized
       )
     ).status,
   ).toBe(415);
-  expect((await upload(Buffer.alloc(1024 * 1024 + 1))).status).toBe(413);
+  const tooLarge = await upload(Buffer.alloc(3 * 1024 * 1024 + 1));
+  expect(tooLarge.status).toBe(413);
+  expect((await tooLarge.json()).error).toBe('Image exceeds the 3 MiB per-image limit');
+  expect((await upload(paddedPng(3 * 1024 * 1024))).status).toBe(201);
   expect(
     (
       await upload(tinyPng(), randomUUID(), sessionId, 'image/png', 'fixture.png', {

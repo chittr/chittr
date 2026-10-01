@@ -78,6 +78,8 @@ export class ClaudeAdapter implements AgentAdapter {
       nativeCompaction: this.nativeCompaction,
       nativeInventoryVerified: this.imageInventoryVerified,
       observedEffort: this.observedEffort,
+      permissions: { ...this.config.permissions },
+      skillsEnabled: this.config.skills?.enabled !== false,
       skillBundleCount:
         this.config.skills?.enabled === false ? 0 : (this.agent.skills?.bundles.length ?? 0),
       commandMode: commandMode(this.config),
@@ -97,17 +99,12 @@ export class ClaudeAdapter implements AgentAdapter {
       requestedEffort: this.agent.effort ?? 'provider default',
       observedModel: this.observedImageModel,
       observedEffort: this.observedEffort,
-      permissions: { ...this.config.permissions },
-      skillsEnabled: this.config.skills?.enabled !== false,
-      commandMode: commandMode(this.config),
+      connected: Boolean(this.proc && !this.proc.closed),
       nativeInventoryVerified: this.imageInventoryVerified,
     };
   }
   imageSupport() {
-    return claudeImageSupport({
-      ...this.imageTuple,
-      observedModel: this.proc && !this.proc.closed ? this.observedImageModel : undefined,
-    });
+    return claudeImageSupport(this.imageTuple);
   }
   get nativeInitialImages() {
     return this.imageSupport().initial.available;
@@ -292,6 +289,9 @@ export class ClaudeAdapter implements AgentAdapter {
       throw error;
     }
     this.refusedTransport = false;
+    // Images are eligible from connection: the init inventory is checked on
+    // every turn, and a failing one revokes retrieval for the rest of that turn.
+    this.registerImages();
     // Attempt then validate: the process initialized under the launch controls
     // above, so the built-in /compact route may be attempted on any CLI
     // identity. compact() accepts only a fresh manual boundary with a matching
@@ -560,12 +560,7 @@ export class ClaudeAdapter implements AgentAdapter {
           typeof m.message?.model === 'string' &&
           m.message.model !== '<synthetic>'
         ) {
-          const model = m.message.model.replace(/\[1m\]$/, '');
-          turnModels.add(model);
-          if (this.observedImageModel && this.observedImageModel !== model) {
-            this.observedImageModel = undefined;
-            this.historyTools!.endTurn();
-          }
+          turnModels.add(m.message.model.replace(/\[1m\]$/, ''));
         }
         if (m.type === 'system' && m.subtype === 'compact_boundary') {
           latestUsage = undefined;
@@ -607,11 +602,12 @@ export class ClaudeAdapter implements AgentAdapter {
               !name.startsWith('mcp__chittr__') &&
               !['StructuredOutput', 'EndConversation'].includes(name),
           );
-          this.imageInventoryVerified =
+          const verified =
             unexpected.length === 0 &&
             Array.isArray(m.tools) &&
             m.tools.includes('mcp__chittr__read_attachment') &&
             m.tools.includes('mcp__chittr__read_conversation');
+          this.imageInventoryVerified = verified;
           this.observedEffort =
             typeof m.effort === 'string' &&
             ['low', 'medium', 'high', 'xhigh', 'max'].includes(m.effort)
@@ -624,7 +620,11 @@ export class ClaudeAdapter implements AgentAdapter {
                 `Unexpected Claude tools would bypass room policy: ${unexpected.join(', ')}`,
               ),
             );
-          }
+          } else if (!verified)
+            // Registration ends this turn's attachment authority, so no image
+            // result is served for the rest of it. A passing inventory changes
+            // nothing: re-registering would end the turn's valid authority too.
+            this.registerImages();
         }
         if (m.type === 'stream_event') {
           const e = m.event;

@@ -1,4 +1,5 @@
 import { AttachmentDraft, type DraftHost, type UploadItem } from './attachment-draft';
+import type { PreparedImage } from './image-prepare';
 import type { AttachmentMetadata } from '../src/types.js';
 import type {
   CommandResult,
@@ -85,6 +86,8 @@ export interface ComposerTransport {
     keepalive?: boolean,
   ): Promise<{ accepted: boolean; revision: number }>;
   upload(file: File, sessionId: string, operationId: string): Promise<AttachmentMetadata>;
+  /** Returns the PNG to upload for a selected image, converting it in the browser when needed. */
+  prepareImage(file: File): Promise<PreparedImage>;
   /** The per-tab draft version allocator. */
   draftVersion(): { clientId: string; version: number };
 }
@@ -244,6 +247,7 @@ export class ComposerController {
         attachments: next.session.composerAttachments,
       },
       {
+        prepare: (file) => this.transport.prepareImage(file),
         upload: (file, operationId) => this.transport.upload(file, sessionId, operationId),
         save: (text, host, keepalive) =>
           this.transport.saveDraft(

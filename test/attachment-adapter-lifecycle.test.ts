@@ -25,6 +25,12 @@ import { tinyPng } from './image-fixture.js';
 import type { AgentAdapter, RoomConfig, TurnInput } from '../src/types.js';
 
 const wires = vi.hoisted(() => [] as any[]);
+// Per-test variations of what the deterministic provider transport reports.
+const wireOptions = vi.hoisted(() => ({
+  claudeTools: undefined as string[] | undefined,
+  codexEffort: 'xhigh' as string | undefined,
+  codexNetwork: false,
+}));
 // Only the external provider transport is deterministic. ToolService, attachment
 // storage/resolver, adapter lifecycle and the separate MCP process are real.
 vi.mock('../src/process.js', async (importOriginal) => {
@@ -90,7 +96,10 @@ vi.mock('../src/process.js', async (importOriginal) => {
           type: 'system',
           subtype: 'init',
           session_id: this.sessionId,
-          tools: ['StructuredOutput', ...roomToolNames.map((x) => `mcp__chittr__${x}`)],
+          tools: wireOptions.claudeTools ?? [
+            'StructuredOutput',
+            ...roomToolNames.map((x) => `mcp__chittr__${x}`),
+          ],
         });
     }
     async rpc(
@@ -149,18 +158,26 @@ vi.mock('../src/process.js', async (importOriginal) => {
             },
           },
         };
+      const thread = {
+        model: 'gpt-6-astra',
+        ...(wireOptions.codexEffort ? { reasoningEffort: wireOptions.codexEffort } : {}),
+        cwd: params.cwd,
+        activePermissionProfile: { id: this.profile, extends: null },
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandbox: { type: 'readOnly', networkAccess: wireOptions.codexNetwork },
+      };
       if (method === 'thread/start')
         return {
+          ...thread,
           thread: { id: this.sessionId, environments: [] },
-          model: 'gpt-6-astra',
-          reasoningEffort: 'xhigh',
-          cwd: params.cwd,
-          activePermissionProfile: { id: this.profile, extends: null },
-          approvalPolicy: 'never',
-          approvalsReviewer: 'user',
-          sandbox: { type: 'readOnly', networkAccess: false },
           runtimeWorkspaceRoots: [],
         };
+      // A resumed thread reports no environment projection.
+      if (method === 'thread/resume') {
+        this.sessionId = params.threadId;
+        return { ...thread, thread: { id: params.threadId } };
+      }
       if (method === 'model/list')
         return {
           data: [
@@ -254,6 +271,7 @@ const adapters: AgentAdapter[] = [],
   clients: Client[] = [];
 beforeEach(() => {
   wires.length = 0;
+  Object.assign(wireOptions, { claudeTools: undefined, codexEffort: 'xhigh', codexNetwork: false });
   root = mkdtempSync(join(tmpdir(), 'adapter-retrieval-'));
   mkdirSync(join(root, 'workspace'));
   // Startup resolves the executable even though the provider transport above is
@@ -351,19 +369,9 @@ async function grok(f: ReturnType<typeof fixture>, provider: 'grok' | 'claude' =
   adapters.push(adapter);
   await adapter.start();
   const wire = wires.at(-1);
-  if (provider === 'claude') {
-    // A fresh connection still explains the one observation it cannot have yet,
-    // on an unlisted build exactly as on a recorded one.
-    expect(adapter.imageSupport().initial).toMatchObject({
-      available: false,
-      status: 'not_observed',
-      reason: expect.stringContaining('a successful text turn is required'),
-    });
-    const warmup = adapter.run(f.input, () => {}, new AbortController().signal);
-    wire.complete();
-    await warmup;
-    expect(adapter.imageSupport().initial.available).toBe(true);
-  }
+  // Claude is image-eligible from connection, before any turn, on an unlisted
+  // build exactly as on a recorded one.
+  if (provider === 'claude') expect(adapter.imageSupport().initial.available).toBe(true);
   const server = wire.servers[0];
   const client = new Client({ name: 'adapter-lifecycle-test', version: '1' });
   clients.push(client);
@@ -457,8 +465,10 @@ it.each(
 
 it('returns byte-free unavailable content through the actual Codex dynamic request handler during and after a turn', async () => {
   const f = fixture();
-  // #105: a provider-default model no longer closes the paths; a mixed room
-  // (restricted permissions with host skills on) still does.
+  // #105: a provider-default model no longer closes the paths, and the room
+  // configuration never did since images became zero-config. A session that
+  // reported no effort is still unobserved.
+  wireOptions.codexEffort = undefined;
   const adapter = new CodexAdapter(
     { id: 'codex', provider: 'codex', enabled: true, instructions: '', fingerprint: 'codex' },
     { ...config, skills: { enabled: true } },
@@ -467,6 +477,11 @@ it('returns byte-free unavailable content through the actual Codex dynamic reque
   );
   adapters.push(adapter);
   await adapter.start();
+  expect(adapter.imageSupport().retrieval).toMatchObject({
+    available: false,
+    status: 'not_observed',
+    reason: expect.stringContaining('native session effort has not been observed'),
+  });
   const wire = wires.at(-1);
   const turn = adapter.run(f.input, () => {}, new AbortController().signal);
   await Promise.resolve();
@@ -503,7 +518,7 @@ it('returns byte-free unavailable content through the actual Codex dynamic reque
   }
 });
 
-it('sends Claude images only from required messages and loses support on ambiguous turn identity', async () => {
+it('sends Claude images only from required messages and lets no turn model decide support', async () => {
   const f = fixture();
   const x = await grok(f, 'claude');
   const ordinary = x.adapter.run(f.input, () => {}, new AbortController().signal);
@@ -523,15 +538,85 @@ it('sends Claude images only from required messages and loses support on ambiguo
       }),
     ]),
   );
+  // #105: the model is evidence only, so a second model in the turn changes nothing.
   x.wire.emit('message', {
     type: 'assistant',
     session_id: x.wire.sessionId,
     message: { model: 'claude-other' },
   });
-  expect(JSON.stringify(await x.read())).not.toContain(tinyPng().toString('base64'));
+  expect((await x.read()).content).toMatchObject([{ type: 'text' }, { type: 'image' }]);
   x.wire.complete();
   await delivery;
-  expect(x.adapter.imageSupport().initial.available).toBe(false);
+  expect(x.adapter.imageSupport().initial.available).toBe(true);
+  expect(x.adapter.imageEvidence.observedModel).toBeUndefined();
+});
+
+it('delivers an image in the first Claude turn of a default room and aborts it on an unexpected native tool', async () => {
+  const f = fixture();
+  // Defaults: every permission off with skills on.
+  config = { ...config, skills: { enabled: true } };
+  const x = await grok(f, 'claude');
+  expect(x.adapter.imageEvidence).toMatchObject({
+    skillsEnabled: true,
+    nativeInventoryVerified: undefined,
+    observedModel: undefined,
+  });
+  expect(x.adapter.imageSupport()).toEqual({
+    provider: 'claude',
+    initial: { available: true, status: 'available' },
+    retrieval: { available: true, status: 'available' },
+  });
+  const image = { ...f.input, messages: [f.input.history![0]!] };
+  wireOptions.claudeTools = [
+    'StructuredOutput',
+    'Bash',
+    ...roomToolNames.map((name) => `mcp__chittr__${name}`),
+  ];
+  await expect(x.adapter.run(image, () => {}, new AbortController().signal)).rejects.toThrow(
+    'Unexpected Claude tools would bypass room policy: Bash',
+  );
+  expect(x.adapter.imageSupport().initial).toMatchObject({
+    available: false,
+    status: 'unsupported',
+    reason: expect.stringContaining(
+      'the observed native tool inventory failed policy verification',
+    ),
+  });
+  expect(JSON.stringify(await x.read())).not.toContain(tinyPng().toString('base64'));
+});
+
+it('revokes Claude retrieval for the rest of a first turn whose init inventory fails without aborting', async () => {
+  const f = fixture();
+  const x = await grok(f, 'claude');
+  wireOptions.claudeTools = ['StructuredOutput', 'mcp__chittr__read_attachment'];
+  const turn = x.adapter.run(f.input, () => {}, new AbortController().signal);
+  // Not aborted: no unexpected native tool was listed.
+  expect(x.adapter.imageEvidence.nativeInventoryVerified).toBe(false);
+  expect(x.adapter.imageSupport().retrieval).toMatchObject({
+    available: false,
+    status: 'unsupported',
+  });
+  const refused = await x.read();
+  expect(refused.content).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ type: 'image' })]),
+  );
+  expect(JSON.stringify(refused)).toContain('attachment-unavailable');
+  expect(JSON.stringify(refused)).not.toContain(tinyPng().toString('base64'));
+  x.wire.complete();
+  await expect(turn).resolves.toMatchObject({ outcomes: [{ kind: 'pass' }] });
+  expect(JSON.stringify(await x.read())).not.toContain(tinyPng().toString('base64'));
+});
+
+it('serves Claude retrieval in a first turn whose init inventory passes', async () => {
+  const f = fixture();
+  const x = await grok(f, 'claude');
+  const turn = x.adapter.run(f.input, () => {}, new AbortController().signal);
+  expect(x.adapter.imageEvidence.nativeInventoryVerified).toBe(true);
+  const result = await x.read();
+  expect(result.content).toMatchObject([{ type: 'text' }, { type: 'image' }]);
+  expect(JSON.stringify(result)).toContain(tinyPng().toString('base64'));
+  x.wire.complete();
+  await turn;
 });
 
 it('does not dispatch Claude pixels when the activity observer cancels immediately before send', async () => {
@@ -550,7 +635,10 @@ it('does not dispatch Claude pixels when the activity observer cancels immediate
   expect(JSON.stringify(await x.read())).not.toContain(tinyPng().toString('base64'));
 });
 
-async function codex(f: ReturnType<typeof fixture>) {
+async function codex(
+  f: ReturnType<typeof fixture>,
+  options: { threadId?: string; room?: RoomConfig } = {},
+) {
   const adapter = new CodexAdapter(
     {
       id: 'codex',
@@ -561,12 +649,12 @@ async function codex(f: ReturnType<typeof fixture>) {
       model: 'gpt-6-astra',
       effort: 'xhigh',
     },
-    config,
+    options.room ?? config,
     {},
     store.access(f.sessionId),
   );
   adapters.push(adapter);
-  await adapter.start();
+  await adapter.start(options.threadId);
   const wire = wires.at(-1);
   expect(adapter.imageSupport().initial.available).toBe(true);
   let nextId = 100;
@@ -602,7 +690,7 @@ it('treats a closed Claude process on an unlisted build as unobserved, not unsup
   expect(support).toMatchObject({
     available: false,
     status: 'not_observed',
-    reason: expect.stringContaining('actual turn model has not been observed'),
+    reason: expect.stringContaining('the Claude process is not connected'),
   });
   if (support.available) throw new Error('closed process unexpectedly retained image support');
   // The identity went with the process, so only its bounded diagnostic remains.
@@ -621,6 +709,53 @@ it('treats a closed Codex process as unobserved rather than a failed native poli
   });
   if (support.available) throw new Error('closed process unexpectedly retained image support');
   expect(support.reason).not.toContain('policy checks failed');
+});
+
+it('opens images on a resumed Codex thread whose startup policy passed and refuses one whose policy fails', async () => {
+  const f = fixture();
+  const threadId = randomUUID();
+  // The default room: every permission off with skills on.
+  const x = await codex(f, { threadId, room: { ...config, skills: { enabled: true } } });
+  expect(x.adapter.imageEvidence).toMatchObject({
+    sessionId: threadId,
+    sessionOrigin: 'resumed',
+    nativeMaintenancePolicyFailures: [],
+    policy: { route: 'resume', environmentCount: 'unavailable', zeroEnvironments: false },
+  });
+  expect(x.adapter.imageSupport()).toEqual({
+    provider: 'codex',
+    initial: { available: true, status: 'available' },
+    retrieval: { available: true, status: 'available' },
+  });
+  const turn = x.adapter.run(
+    { ...f.input, messages: [f.input.history![0]!] },
+    () => {},
+    new AbortController().signal,
+  );
+  await Promise.resolve();
+  expect(JSON.stringify(x.wire.sent.find((value: any) => value.method === 'turn/start'))).toContain(
+    tinyPng().toString('base64'),
+  );
+  const result = await x.call('read_attachment', { attachment_id: f.metadata.id });
+  expect(result.result.contentItems[1]).toEqual({
+    type: 'inputImage',
+    imageUrl: `data:image/png;base64,${tinyPng().toString('base64')}`,
+  });
+  x.wire.complete();
+  await turn;
+  // A thread whose other native policy observations fail still never starts.
+  wireOptions.codexNetwork = true;
+  const failing = new CodexAdapter(
+    { id: 'codex', provider: 'codex', enabled: true, instructions: '', fingerprint: 'codex' },
+    config,
+    {},
+    store.access(f.sessionId),
+  );
+  adapters.push(failing);
+  await expect(failing.start(randomUUID())).rejects.toThrow(
+    'Codex native policy checks failed on the started thread: networkDisabled',
+  );
+  expect(failing.imageSupport().initial.available).toBe(false);
 });
 
 it('delivers current and later Codex images in order without replaying context-only pixels', async () => {

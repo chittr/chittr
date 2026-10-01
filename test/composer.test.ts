@@ -116,6 +116,8 @@ function fixture(initial: Record<string, string> = {}) {
       uploads.set(file.name, pending);
       return pending.promise;
     },
+    // Browser decoding is Playwright's concern; here every file is already the PNG to send.
+    prepareImage: async (file) => ({ file, converted: false }),
     draftVersion: () => ({ clientId: 'tab', version: ++version }),
   };
   const composer = new ComposerController(transport, {

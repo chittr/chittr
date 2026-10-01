@@ -23,6 +23,7 @@ import {
   validateImage,
 } from '../src/attachments.js';
 import { SessionStore } from '../src/store.js';
+import { providerEventBytes } from '../src/process.js';
 import { newSession, Room } from '../src/room.js';
 import { RoomController } from '../src/controller.js';
 import type { AgentAdapter, RoomConfig, TurnInput, TurnResult } from '../src/types.js';
@@ -77,23 +78,48 @@ describe('attachment storage', () => {
     expect(() => validateImage(tinyPng().subarray(0, 30), 'image/png')).toThrow('complete');
     expect(() => validateImage(Buffer.from('not an image'), 'image/png')).toThrow('complete PNG');
     expect(() =>
-      validateImage(Buffer.alloc(attachmentLimits.perImageBytes + 1), 'image/png'),
-    ).toThrow('1 MiB');
-    expect(() =>
       validateImage(dimensionPng(attachmentLimits.maximumDimension + 1, 1), 'image/png'),
     ).toThrow('dimensions');
+  });
+
+  it('accepts 3 MiB images and 20 per message, rejects past either and past 6 MiB, naming each limit', () => {
+    expect(attachmentLimits).toMatchObject({
+      perImageBytes: 3 * 1024 * 1024,
+      imagesPerMessage: 20,
+      aggregateBytes: 6 * 1024 * 1024,
+    });
+    const largest = paddedPng(3 * 1024 * 1024);
+    expect(largest.length).toBe(3_145_728);
+    expect(validateImage(largest, 'image/png')).toMatchObject({ width: 1, height: 1 });
+    const session = newSession(config());
+    const staged = store.stageAttachment({
+      sessionId: session.id,
+      operationId: randomUUID(),
+      filename: 'largest.png',
+      mediaType: 'image/png',
+      bytes: largest,
+    });
+    expect(staged.byteSize).toBe(3_145_728);
+    expect(() => validateImage(paddedPng(3 * 1024 * 1024 + 1), 'image/png')).toThrow(
+      'Image exceeds the 3 MiB per-image limit',
+    );
+    const set = (count: number, byteSize: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `att-${String(index).padStart(32, '0')}`,
+        filename: `${index}.png`,
+        mediaType: 'image/png' as const,
+        byteSize,
+        width: 1,
+        height: 1,
+      }));
+    expect(() => validateAttachmentSet(set(20, 1024))).not.toThrow();
+    expect(() => validateAttachmentSet(set(21, 1024))).toThrow(
+      'A message can contain at most 20 images',
+    );
+    expect(() => validateAttachmentSet(set(2, 3 * 1024 * 1024))).not.toThrow();
     expect(() =>
-      validateAttachmentSet(
-        Array.from({ length: 4 }, (_, index) => ({
-          id: `att-${String(index).padStart(32, '0')}`,
-          filename: `${index}.png`,
-          mediaType: 'image/png' as const,
-          byteSize: 800 * 1024,
-          width: 1,
-          height: 1,
-        })),
-      ),
-    ).toThrow('3 MiB');
+      validateAttachmentSet([...set(2, 3 * 1024 * 1024), { ...set(3, 1)[2]!, byteSize: 1 }]),
+    ).toThrow('Images exceed the 6 MiB per-message limit');
   });
 
   it('deduplicates upload operations and content while rejecting changed operation input', () => {
@@ -265,8 +291,8 @@ describe('attachment storage', () => {
       `Chittr image for message #m2, attachment ${metadata[2]!.id}.`,
     ]);
     expect(content.filter((part: any) => part.type === 'image')).toHaveLength(3);
-    expect(JSON.stringify(content).length).toBeLessThan(
-      attachmentLimits.nativeFrameCharacters - 256 * 1024,
+    expect(Buffer.byteLength(JSON.stringify(content))).toBeLessThan(
+      providerEventBytes - 256 * 1024,
     );
   });
 });
@@ -302,7 +328,7 @@ class NativeFake implements AgentAdapter {
   async close() {}
 }
 
-it('splits queued image messages so each valid attachment set reaches the adapter', async () => {
+it('splits queued image messages so no native batch exceeds 20 images or 6 MiB', async () => {
   const cfg = config();
   cfg.agents.viewer = {
     id: 'viewer',
@@ -314,24 +340,31 @@ it('splits queued image messages so each valid attachment set reaches the adapte
   const adapter = new NativeFake();
   const room = new Room(cfg, store, undefined, () => adapter);
   await room.start();
-  const groups = [0, 1].map(() =>
-    Array.from({ length: 3 }, () => stage(room.session.id, paddedPng(900 * 1024))),
-  );
-  room.send('@viewer first', undefined, {
-    attachmentIds: groups[0]!.map((item) => item.id),
-    operationId: randomUUID(),
-  });
-  room.send('@viewer second', undefined, {
-    attachmentIds: groups[1]!.map((item) => item.id),
-    operationId: randomUUID(),
-  });
-  const deadline = Date.now() + 2000;
-  while (adapter.inputs.length < 2 && Date.now() < deadline)
+  const send = (text: string, count: number, bytes: Buffer) =>
+    room.send(`@viewer ${text}`, undefined, {
+      attachmentIds: Array.from({ length: count }, () => stage(room.session.id, bytes).id),
+      operationId: randomUUID(),
+    });
+  // Each message is valid alone. m1 and m2 are 8 MiB together; m3 and m4 are 22 images.
+  send('first', 2, paddedPng(2 * 1024 * 1024));
+  send('second', 2, paddedPng(2 * 1024 * 1024));
+  send('third', 11, tinyPng());
+  send('fourth', 11, alternatePng());
+  const deadline = Date.now() + 4000;
+  while (adapter.inputs.length < 3 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 10));
   expect(adapter.inputs.map((input) => input.messages.map((message) => message.id))).toEqual([
     ['m1'],
-    ['m2'],
+    ['m2', 'm3'],
+    ['m4'],
   ]);
+  for (const input of adapter.inputs) {
+    const images = input.messages.flatMap((message) => message.attachments ?? []);
+    expect(images.length).toBeLessThanOrEqual(attachmentLimits.imagesPerMessage);
+    expect(images.reduce((sum, image) => sum + image.byteSize, 0)).toBeLessThanOrEqual(
+      attachmentLimits.aggregateBytes,
+    );
+  }
   await room.close();
 });
 

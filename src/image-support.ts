@@ -104,6 +104,7 @@ export interface GrokImageTuple {
   cliVersion: string;
   requestedModel: string;
   observedModel: string;
+  /** Evidence on current builds; only the legacy restriction reads the room policy. */
   permissions: Permissions;
   skillsEnabled: boolean;
   commandMode?: 'off' | 'sandboxed' | 'trusted';
@@ -121,11 +122,13 @@ const grokCliIdentity = /^grok \d+\.\d+\.\d+ \([a-z0-9]{1,16}\) \[stable\]$/;
  * invariant failure. Every failed condition is listed, using the live effective
  * state the adapter started with, never the on-disk config alone.
  *
- * Eligibility comes from the observed runtime contract, not from the CLI version
- * and, since #105, not from the requested or observed model either. A model is
- * required evidence and a bounded diagnostic; which model it is decides nothing.
- * `testedImageBuilds` records what was exercised and is not consulted here. The
- * exact legacy identity is the only version-keyed branch, and it only restricts.
+ * Eligibility comes from the observed runtime contract, not from the CLI version,
+ * the room configuration or, since #105, the requested or observed model. A model
+ * is required evidence and a bounded diagnostic; which model it is decides nothing.
+ * Room permissions, skills and command mode do not change image delivery, so any
+ * room configuration is eligible on a current build. `testedImageBuilds` records
+ * what was exercised and is not consulted here. The exact legacy identity is the
+ * only version-keyed branch, and it only restricts.
  */
 export function grokInitialImageGate(tuple: GrokImageTuple): ImagePathSupport {
   const observations: string[] = [];
@@ -135,12 +138,13 @@ export function grokInitialImageGate(tuple: GrokImageTuple): ImagePathSupport {
   // identity is required evidence, so it is a missing observation.
   const identityObserved = grokCliIdentity.test(tuple.cliVersion);
   if (!identityObserved) observations.push('the live CLI identity has not been observed');
+  // Only the legacy restriction reads the room policy.
   const policyUnknown =
-    ['edits', 'commands', 'network'].some(
+    !current &&
+    (['edits', 'commands', 'network'].some(
       (key) => typeof tuple.permissions?.[key as keyof Permissions] !== 'boolean',
     ) ||
-    typeof tuple.skillsEnabled !== 'boolean' ||
-    (current && !['off', 'sandboxed', 'trusted'].includes(tuple.commandMode ?? ''));
+      typeof tuple.skillsEnabled !== 'boolean');
   if (policyUnknown) observations.push('effective room policy has not been observed');
   // The session model is required evidence. Its value is not compared: an
   // explicit request or a model outside the historical records is not a
@@ -167,24 +171,10 @@ export function grokInitialImageGate(tuple: GrokImageTuple): ImagePathSupport {
       if (failed.length) mismatches.push(`the observed runtime contract failed: ${named(failed)}`);
     }
   }
-  // The gate keys on the effective command mode only. How a room obtained
-  // `trusted` (user-level trustedCommands.workspaces or --trusted-commands) is
-  // byte-free evidence on the adapter, never a gate input.
-  const supportedRoom =
-    current &&
-    ((granted.length === 0 && !tuple.skillsEnabled && tuple.commandMode === 'off') ||
-      (granted.length === 3 &&
-        tuple.skillsEnabled &&
-        (tuple.commandMode === 'sandboxed' || tuple.commandMode === 'trusted')));
   if (current && tuple.nativeInventoryVerified === undefined)
     observations.push('native tool inventory has not been observed');
   else if (current && tuple.nativeInventoryVerified === false)
     mismatches.push('the observed native tool inventory failed policy verification');
-  if (!policyUnknown && current && !supportedRoom)
-    mismatches.push(
-      'room configuration is outside the tested restricted, sandboxed-command and trusted-command configurations' +
-        `: edits=${tuple.permissions.edits}, commands=${tuple.permissions.commands}, network=${tuple.permissions.network}, skills=${tuple.skillsEnabled}, command mode=${tuple.commandMode}`,
-    );
   if (!policyUnknown && !current && granted.length)
     mismatches.push(
       `room ${granted.length === 1 ? 'permission' : 'permissions'} ${listed(granted)} ${granted.length === 1 ? 'is' : 'are'} on; the verified tuple requires edits, commands and network off`,
@@ -335,12 +325,13 @@ export interface ClaudeImageTuple {
   cliVersion: string;
   requestedModel: string;
   requestedEffort: string;
+  /** Evidence and a bounded diagnostic only. */
   observedModel?: string;
   /** Evidence only: the accepted Claude build does not acknowledge effort natively. */
   observedEffort?: string;
-  permissions: Permissions;
-  skillsEnabled: boolean;
-  commandMode: 'off' | 'sandboxed' | 'trusted';
+  /** The adapter's provider process is running. */
+  connected: boolean;
+  /** Undefined until a turn's init event lists the native tools. */
   nativeInventoryVerified?: boolean;
 }
 
@@ -408,42 +399,21 @@ export const testedClaudeImageBuilds: readonly {
 ]);
 
 /**
- * Claude's image gate. Eligibility comes from the live observations the adapter
- * made on its own process: a verified native tool inventory, an observed turn
- * model and an approved room configuration. The CLI identity, the requested
- * model and effort and the observed model are reported, never compared, so an
- * unlisted build or an untested model is decided by the same requirements as a
- * recorded one, and a provider that cannot take images fails at delivery.
+ * Claude's image gate. Images are eligible from connection, before any turn, in
+ * every room configuration. The one live observation that closes them is an
+ * observed native tool inventory that failed policy verification; a turn whose
+ * init lists an unexpected native tool is aborted by the adapter whatever this
+ * report says. The CLI identity, the requested model and effort and the observed
+ * model are reported, never compared, so an unlisted build or an untested model
+ * is decided by the same requirements as a recorded one, and a provider that
+ * cannot take images fails at delivery.
  */
 export function claudeImageSupport(tuple: ClaudeImageTuple): ImageSupportReport {
   const observations: string[] = [];
   const unsupported: string[] = [];
-  if (tuple.nativeInventoryVerified === undefined)
-    observations.push('native tool inventory has not been observed');
-  else if (tuple.nativeInventoryVerified === false)
+  if (!tuple.connected) observations.push('the Claude process is not connected');
+  if (tuple.nativeInventoryVerified === false)
     unsupported.push('the observed native tool inventory failed policy verification');
-  if (!tuple.observedModel)
-    observations.push(
-      'actual turn model has not been observed; a successful text turn is required',
-    );
-  const policyUnknown =
-    !['edits', 'commands', 'network'].every(
-      (key) => typeof tuple.permissions?.[key as keyof Permissions] === 'boolean',
-    ) ||
-    typeof tuple.skillsEnabled !== 'boolean' ||
-    !['off', 'sandboxed', 'trusted'].includes(tuple.commandMode);
-  if (policyUnknown) observations.push('effective room policy has not been observed');
-  else if (!(
-    (Object.values(tuple.permissions).every((v) => v === false) &&
-      !tuple.skillsEnabled &&
-      tuple.commandMode === 'off') ||
-    (Object.values(tuple.permissions).every((v) => v === true) &&
-      tuple.skillsEnabled &&
-      tuple.commandMode === 'trusted')
-  ))
-    unsupported.push(
-      'room configuration is outside the approved restricted and trusted configurations',
-    );
   // Bounded diagnostics only: identities are reported, never compared. Empty or
   // unrecognized text renders as unknown/unrecognized and closes nothing.
   const live = [
@@ -471,21 +441,16 @@ export interface CodexImageTuple {
   requestedEffort: string;
   observedModel?: string;
   observedEffort?: string;
-  permissions: Permissions;
-  skillsEnabled: boolean;
-  commandMode: 'off' | 'sandboxed' | 'trusted';
+  /** The native policy result startup enforces, for the live thread only. */
   nativePolicyVerified?: boolean;
-  sessionOrigin: 'fresh' | 'resumed' | 'unknown';
 }
 
 /**
  * Historical Codex coverage: the build, model and effort accepted for verified
- * fresh threads after #52's six live runs. Cold-resumed threads remain
- * unavailable under the user's scope disposition. As for Claude, this is a
- * record of what was exercised: `codexImageSupport` consults it for nothing
- * and compares no model or effort. The verified native policy, the observed
- * session identity, the fresh thread and the room configuration decide every
- * identity.
+ * fresh threads after #52's six live runs. As for Claude, this is a record of
+ * what was exercised: `codexImageSupport` consults it for nothing and compares
+ * no model or effort. The verified native policy and the observed session
+ * identity decide every identity, for fresh and resumed threads alike.
  */
 export const testedCodexImageBuilds: readonly {
   provider: 'codex';
@@ -507,50 +472,22 @@ export const testedCodexImageBuilds: readonly {
 
 /**
  * Codex's image gate. Eligibility comes from the live observations the adapter
- * made on its own thread: the native session reported its model and effort,
- * the native policy checks passed, the thread is fresh and the room is an
- * approved configuration. The CLI identity and the requested and observed model
- * and effort are reported, never compared, so an unlisted build or an untested
- * model/effort pair is decided by the same requirements as the recorded one.
+ * made on its own thread: the native session reported its model and effort and
+ * the native policy checks that startup enforces passed. A resumed thread and
+ * any room configuration are decided by the same requirements as a fresh one.
+ * The CLI identity and the requested and observed model and effort are reported,
+ * never compared, so an unlisted build or an untested model/effort pair is
+ * decided by the same requirements as the recorded one.
  */
 export function codexImageSupport(tuple: CodexImageTuple): ImageSupportReport {
   const observations: string[] = [];
   const unsupported: string[] = [];
   if (!tuple.observedModel) observations.push('native session model has not been observed');
   if (!tuple.observedEffort) observations.push('native session effort has not been observed');
-  if (tuple.sessionOrigin === 'unknown') observations.push('thread origin has not been observed');
-  else if (tuple.sessionOrigin === 'resumed')
-    unsupported.push(
-      'only verified fresh threads support images; use checkpoint replacement or a new conversation',
-    );
   if (tuple.nativePolicyVerified === undefined)
     observations.push('native policy checks have not completed');
   else if (tuple.nativePolicyVerified === false)
     unsupported.push('the observed native policy checks failed');
-  const policyUnknown =
-    !(['edits', 'commands', 'network'] as const).every(
-      (key) => typeof tuple.permissions?.[key] === 'boolean',
-    ) ||
-    typeof tuple.skillsEnabled !== 'boolean' ||
-    !['off', 'sandboxed', 'trusted'].includes(tuple.commandMode);
-  if (policyUnknown) observations.push('effective room policy has not been observed');
-  else if (
-    !(
-      (['edits', 'commands', 'network'] as const).every(
-        (key) => tuple.permissions[key] === false,
-      ) &&
-      tuple.skillsEnabled === false &&
-      tuple.commandMode === 'off'
-    ) &&
-    !(
-      (['edits', 'commands', 'network'] as const).every((key) => tuple.permissions[key] === true) &&
-      tuple.skillsEnabled === true &&
-      tuple.commandMode === 'trusted'
-    )
-  )
-    unsupported.push(
-      'room configuration is outside the approved restricted and trusted configurations',
-    );
   // Bounded diagnostics only, exactly as for Claude above.
   const live = [
     `live CLI ${safeCliIdentity(tuple.cliVersion)}`,

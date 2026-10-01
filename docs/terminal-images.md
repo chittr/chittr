@@ -18,7 +18,16 @@ The attachment input supports:
 - `/attach --list` shows staged metadata and full host IDs.
 - `/attach --remove <id>` removes that reference from the draft.
 - `/attach --clipboard` reads a PNG from the macOS clipboard.
+- `/attach --status` prints each recipient of the current draft with its full
+  image-support reason, or `can receive images`. It never sends and leaves the
+  caption and staged images unchanged.
 - `/help` shows attachment instructions.
+
+When a staged image's recipient can't receive it, the composer shows one short
+line per affected recipient, `@<id> can't receive images` (or `... yet` while
+support is not yet observed), followed by `Ctrl+O, /attach --status for
+details.` Images need no room configuration; see
+[provider and image limits](installation.md#provider-and-image-limits).
 
 Tab completes action names, paths and staged removal IDs. Paths are absolute or
 relative to the directory where Chittr launched. The entire remainder is one
@@ -28,8 +37,9 @@ file named `--list`. Explicit symlinks to regular files work. No shell expressio
 variables, globs, tilde expansion or shell-style escaped spaces are evaluated.
 The ordinary composer retains its existing workspace-fenced file completion.
 
-The shared attachment contract accepts complete PNGs up to 1 MiB each, four
-images per draft/message and 3 MiB total. Source bytes are copied; the original
+The shared attachment contract accepts complete PNGs up to 3 MiB each, 20
+images per draft/message and 6 MiB total. The terminal does not resize or
+convert images; the browser does. Source bytes are copied; the original
 file can then move or disappear. Messages and drafts retain host IDs and display
 metadata, never the selected source path or image bytes.
 

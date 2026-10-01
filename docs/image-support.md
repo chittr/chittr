@@ -12,7 +12,7 @@ Issue #50 supplies the shared foundation for [epic #46](https://github.com/mcglo
 
 `AgentAdapter.imageSupport()` reports `initial` and `retrieval` independently. Each unavailable path has a byte-free reason. Room preflight uses only `initial.available === true`; `nativeInitialImages` and the compatibility `initialImageSupport()` accessor cannot authorize dispatch. Grok derives both compatibility accessors from the report. Missing reports fail closed. Initial refusal preserves the per-recipient failure and notice, charges no exchange, keeps text flowing and requires an explicit retry after support changes.
 
-`src/image-support.ts` contains the report types, the code-owned bridge registrations and the record of tested builds. Since #85 neither Claude's nor Codex's CLI version decides image eligibility, and #69 did the same for Grok, whose gate still requires an observed CLI identity and keeps the exact 1.0.13 restriction below. Since #105 no provider's requested or observed model or effort decides it either. Eligibility comes only from what the adapter observed on its own live process: Codex needs a fresh thread, verified native policy checks and a native session that reported its model and effort; Claude needs a verified native tool inventory and one completed text turn that observed the turn model; Grok needs its observed isolated-room runtime contract, a verified native inventory and an observed session model; all three need an approved room configuration. `claudeImageBridge`, `codexImageBridge` and `grokImageBridge` are the registrations, one key per provider, and `registeredImageMapping` consults nothing else. `testedImageBuilds`, `testedClaudeImageBuilds` and `testedCodexImageBuilds` record which CLI identities, models and efforts were exercised and are not consulted by any gate. A version difference, a different model or a different effort never closes or opens a gate, in either direction, and nothing is inferred from semver order for any provider. An available path on an unlisted release or an untested model means the required observations passed; it does not mean that release or model was visually tested, and a provider or model that cannot take images fails at delivery with the provider's own error. A missing, unknown or failed observation and an unverified room configuration remain unavailable. The exact `grok 1.0.13 (5e9a58528b76) [stable]` identity keeps its older room restriction. The contract and the current coverage are detailed below; the older foundation evidence remains historical. Providers without a registered bridge report unavailable using their own version observations. CLI and model diagnostics accept only bounded identity formats; arbitrary diagnostic text is not echoed. Unavailable reasons end with the live CLI identity and, once observed, the observed model and effort, as diagnostics.
+`src/image-support.ts` contains the report types, the code-owned bridge registrations and the record of tested builds. Since #85 neither Claude's nor Codex's CLI version decides image eligibility, and #69 did the same for Grok, whose gate still requires an observed CLI identity and keeps the exact 1.0.13 restriction below. Since #105 no provider's requested or observed model or effort decides it either. Eligibility comes only from what the adapter observed on its own live process: Codex needs the native policy checks that startup enforces to have passed and a native session that reported its model and effort, on a fresh or a resumed thread; Claude needs a connected process whose observed native tool inventory has not failed, so images are available from connection and in the first message; Grok needs its observed isolated-room runtime contract, a verified native inventory and an observed session model. Room permissions, skills and command mode do not change image delivery and decide nothing, so every room configuration, including the defaults, is eligible; the native restrictions are the same in every configuration. `claudeImageBridge`, `codexImageBridge` and `grokImageBridge` are the registrations, one key per provider, and `registeredImageMapping` consults nothing else. `testedImageBuilds`, `testedClaudeImageBuilds` and `testedCodexImageBuilds` record which CLI identities, models and efforts were exercised and are not consulted by any gate. A version difference, a different model or a different effort never closes or opens a gate, in either direction, and nothing is inferred from semver order for any provider. An available path on an unlisted release or an untested model means the required observations passed; it does not mean that release or model was visually tested, and a provider or model that cannot take images fails at delivery with the provider's own error. A missing, unknown or failed observation remains unavailable. The exact `grok 1.0.13 (5e9a58528b76) [stable]` identity keeps its older room restriction. The contract and the current coverage are detailed below; the older foundation evidence remains historical. Providers without a registered bridge report unavailable using their own version observations. CLI and model diagnostics accept only bounded identity formats; arbitrary diagnostic text is not echoed. Unavailable reasons end with the live CLI identity and, once observed, the observed model and effort, as diagnostics.
 
 Only host/adapter code calls `ToolService.registerRetrievalBridge({key, report})`. The key must be the code-owned bridge registered for that provider, and the live retrieval report must be available. Registration writes no pixels and cannot create a transport. It revokes the old turn before selecting the next route. The host-authored turn file carries the selected key/provider, revision, active state and room session; an isolated MCP reader cannot register a route. The separate process checks the same code-side mapping inventory. A registry entry alone grants nothing.
 
@@ -23,20 +23,21 @@ Adapter lifecycle and capability-report transitions are described in the
 
 ## Gates and coverage
 
-| Condition                                                                                            | Current disposition                                                         | Evidence and unresolved work                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Registered bridge: `claude-mcp-image`, `codex-dynamic-image`, `grok-mcp-image`                       | Hard transport gate                                                         | Code-owned registration per provider, separate from the tested-build records, which register nothing. An unknown or wrong-provider key is refused whatever the CLI reports. Since #85 Claude's and Codex's CLI builds are not gates either, as Grok's stopped being one at #69; each version is evidence and a bounded diagnostic, apart from Grok's identity requirement and legacy 1.0.13 restriction below. |
-| Claude verified native tool inventory and an observed turn model                                     | Hard policy/transport gate                                                  | Live adapter observations only. A successful text turn must establish the actual turn model; missing observations are `not_observed`, failed ones `unsupported`. Since #105 the requested model and effort and the observed model are evidence, not compared. #85, #105.                                                                                                                                       |
-| Codex verified native policy, fresh thread, natively observed model and effort                       | Hard policy/transport gate                                                  | Live adapter observations only. Cold-resumed threads stay unavailable; #63 tracks that mismatch. Since #105 which model and effort were requested or observed is evidence, not compared. #85, #105.                                                                                                                                                                                                            |
-| Grok observed isolated-room runtime contract                                                         | Hard policy/transport gate                                                  | Host-created isolated runtime, ACP initialization, cached subscription authentication, exact room MCP inventory and a live process, each set by `src/adapters/grok.ts` only after it passed. Missing, unknown or failed is unavailable on both paths. #69.                                                                                                                                                     |
-| Current host turn, public history, session and revision                                              | Hard authorization gate                                                     | `test/attachment-retrieval.test.ts`, `test/attachment-adapter-lifecycle.test.ts`; checked again at final serialization.                                                                                                                                                                                                                                                                                        |
-| Effective Grok tool inventory, isolated MCP, denied filesystem/terminal capabilities and `image_gen` | Hard policy/transport gate                                                  | `src/adapters/grok.ts` start checks and existing native evidence. No native task-tool restoration.                                                                                                                                                                                                                                                                                                             |
-| Grok requested and observed model                                                                    | Evidence and diagnostic, not a gate                                         | Since #105 an explicit request or a model outside the records is not a mismatch; only a missing session-model observation closes the paths. The recorded runs requested the provider default and observed `grok-4.6`; the exact 1.0.30 room coverage is recorded below.                                                                                                                                        |
-| Grok 1.0.13 edits, commands and network all false                                                    | Retained restriction; permission dependency and trusted coverage unresolved | Restricted native evidence passes. Neither trusted behavior nor independence of these settings from transport/policy enforcement is established. #56 must supply restricted and trusted coverage plus effective-policy evidence before removing a restriction.                                                                                                                                                 |
-| Grok 1.0.13 skills disabled                                                                          | Retained restriction; broader coverage unresolved                           | Only skills-off evidence is accepted. Do not infer safe skills-on behavior from a room YAML file.                                                                                                                                                                                                                                                                                                              |
-| Grok effort                                                                                          | Test configuration, not an image gate                                       | Existing default-effort behavior is preserved. `high` was requested and natively selected in the accepted 1.0.30 trusted-room runs below.                                                                                                                                                                                                                                                                      |
-| Codex workspace roots                                                                                | Fresh-thread policy verified                                                | User approved zero environments/roots and fresh-thread-only images on 2026-09-16. Cold-resumed sessions remain unavailable; #63 tracks their policy mismatch.                                                                                                                                                                                                                                                  |
-| Antigravity CLI/configuration and both image paths                                                   | Unsupported in this release                                                 | Out of #46 by Bill's 2026-09-16 scope decision. #54 and Bill decide version/configuration for the later epic. Nothing here widens the production gate.                                                                                                                                                                                                                                                         |
+| Condition                                                                                            | Current disposition                                                         | Evidence and unresolved work                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Registered bridge: `claude-mcp-image`, `codex-dynamic-image`, `grok-mcp-image`                       | Hard transport gate                                                         | Code-owned registration per provider, separate from the tested-build records, which register nothing. An unknown or wrong-provider key is refused whatever the CLI reports. Since #85 Claude's and Codex's CLI builds are not gates either, as Grok's stopped being one at #69; each version is evidence and a bounded diagnostic, apart from Grok's identity requirement and legacy 1.0.13 restriction below.                  |
+| Claude connected process and a native tool inventory that has not failed                             | Hard policy/transport gate                                                  | Live adapter observations only. Available from connection, before any turn; a disconnected process is `not_observed`, an observed failing inventory `unsupported`. Every turn's init still aborts on an unexpected native tool, and a failing inventory revokes retrieval for the rest of that turn. Since #105 the requested model and effort and the observed model are evidence, not compared. #85, #105, local ticket 0001. |
+| Codex native policy that startup enforces, natively observed model and effort                        | Hard policy/transport gate                                                  | Live adapter observations only. Fresh and resumed threads are decided alike; the environment projection and route are evidence. A thread whose other native policy observations fail never starts. Since #105 which model and effort were requested or observed is evidence, not compared. #85, #105, local ticket 0001.                                                                                                        |
+| Room permissions, skills and command mode                                                            | Evidence, not a gate                                                        | Room policy does not affect image delivery, and native restrictions are the same in every configuration, so no current gate reads it. Only the exact legacy Grok 1.0.13 identity keeps its restriction below. Local ticket 0001.                                                                                                                                                                                                |
+| Grok observed isolated-room runtime contract                                                         | Hard policy/transport gate                                                  | Host-created isolated runtime, ACP initialization, cached subscription authentication, exact room MCP inventory and a live process, each set by `src/adapters/grok.ts` only after it passed. Missing, unknown or failed is unavailable on both paths. #69.                                                                                                                                                                      |
+| Current host turn, public history, session and revision                                              | Hard authorization gate                                                     | `test/attachment-retrieval.test.ts`, `test/attachment-adapter-lifecycle.test.ts`; checked again at final serialization.                                                                                                                                                                                                                                                                                                         |
+| Effective Grok tool inventory, isolated MCP, denied filesystem/terminal capabilities and `image_gen` | Hard policy/transport gate                                                  | `src/adapters/grok.ts` start checks and existing native evidence. No native task-tool restoration.                                                                                                                                                                                                                                                                                                                              |
+| Grok requested and observed model                                                                    | Evidence and diagnostic, not a gate                                         | Since #105 an explicit request or a model outside the records is not a mismatch; only a missing session-model observation closes the paths. The recorded runs requested the provider default and observed `grok-4.6`; the exact 1.0.30 room coverage is recorded below.                                                                                                                                                         |
+| Grok 1.0.13 edits, commands and network all false                                                    | Retained restriction; permission dependency and trusted coverage unresolved | Restricted native evidence passes. Neither trusted behavior nor independence of these settings from transport/policy enforcement is established. #56 must supply restricted and trusted coverage plus effective-policy evidence before removing a restriction.                                                                                                                                                                  |
+| Grok 1.0.13 skills disabled                                                                          | Retained restriction; broader coverage unresolved                           | Only skills-off evidence is accepted. Do not infer safe skills-on behavior from a room YAML file.                                                                                                                                                                                                                                                                                                                               |
+| Grok effort                                                                                          | Test configuration, not an image gate                                       | Existing default-effort behavior is preserved. `high` was requested and natively selected in the accepted 1.0.30 trusted-room runs below.                                                                                                                                                                                                                                                                                       |
+| Codex workspace roots                                                                                | Evidence, not a gate                                                        | Zero environments/roots were approved for fresh threads on 2026-09-16. Bill approved images on resumed threads for chittr/chittr, superseding #63's hold, in local ticket 0001; whether a resumed thread's environment is acceptable as a session-level policy question stays open.                                                                                                                                             |
+| Antigravity CLI/configuration and both image paths                                                   | Unsupported in this release                                                 | Out of #46 by Bill's 2026-09-16 scope decision. #54 and Bill decide version/configuration for the later epic. Nothing here widens the production gate.                                                                                                                                                                                                                                                                          |
 
 The foundation retained these restrictions. #56 adds the restricted and sandboxed-command 1.0.30 room coverage below. #69 replaces Grok's exact-build gate with the observed runtime contract, adds the trusted-command room, and owns the 1.0.34 coverage of all three rooms. The two 1.0.13 rows above still describe that exact identity. A pending coverage row cannot override a hard gate or an unresolved dependency.
 
@@ -50,29 +51,29 @@ Accepted historical Grok evidence applies only to `grok 1.0.13 (5e9a58528b76) [s
 
 The tested-build catalogs retain the historical CLI/model identities and issue numbers. Claude and Codex eligibility use their approved mappings; Grok mapping registration still uses its catalog key, while its initial-image gate uses live runtime observations. All inventories carry the provider and registered mapping key. The initial verification attempt (`image-support-foundation-2026-09-15.json`, private historical record) was blocked. The completed regressions (`image-support-foundation-verified-2026-09-15.json`, private historical record) are historical verification, separate from the code inventory. Original records are held privately under #99; fields not observed there stay unknown.
 
-| Provider / requested model / effort                                | Room                                                  | Initial / retrieval       | Status and owner                                                                                                         |
-| ------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Grok / provider default / provider default                         | Restricted, skills off, command mode off              | Accepted / accepted       | Exact build above; both migration regressions passed below                                                               |
-| Grok 1.0.30 / provider default / high, observed `grok-4.6`         | All permissions true, skills on, sandboxed commands   | Accepted / accepted       | #56; current evidence below                                                                                              |
-| Grok 1.0.30 / provider default / provider default                  | Restricted, skills off, command mode off              | Accepted / accepted       | #56; current evidence below                                                                                              |
-| Grok 1.0.34 / provider default / provider default                  | Restricted, skills off, command mode off              | Accepted / accepted       | #69; evidence (`grok-images-2026-09-17.json`, private historical record) and the issue-69 section below                  |
-| Grok 1.0.34 / provider default / high                              | All permissions true, skills on, sandboxed commands   | Accepted / accepted       | #69; evidence (`grok-images-2026-09-17.json`, private historical record) and the issue-69 section below                  |
-| Grok 1.0.34 / provider default / high                              | All permissions true, skills on, trusted commands     | Accepted / accepted       | #69; evidence (`grok-images-2026-09-17.json`, private historical record) and the issue-69 section below                  |
-| Claude / opus / xhigh                                              | Restricted                                            | Accepted / accepted       | #53; recorded build and linked evidence below                                                                            |
-| Claude / opus / xhigh                                              | Trusted, all permissions true, skills on              | Accepted / accepted       | #53; recorded build and linked evidence below                                                                            |
-| Claude 2.1.274 / opus / xhigh                                      | Restricted                                            | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-17.json`, private historical record)                     |
-| Claude 2.1.274 / opus / xhigh                                      | Trusted, all permissions true, skills on              | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-17.json`, private historical record)                     |
-| Claude 2.1.276 / opus / xhigh                                      | Restricted                                            | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18.json`, private historical record)                     |
-| Claude 2.1.276 / opus / xhigh                                      | Trusted, all permissions true, skills on              | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18.json`, private historical record)                     |
-| Claude 2.1.277 / opus / xhigh                                      | Restricted                                            | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18-b.json`, private historical record)                   |
-| Claude 2.1.277 / opus / xhigh                                      | Trusted, all permissions true, skills on              | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18-b.json`, private historical record)                   |
-| Codex / gpt-6-astra / xhigh                                        | Restricted                                            | Accepted / accepted       | #52 evidence (`codex-images-2026-09-16.md`, private historical record); verified fresh threads only; resumed unavailable |
-| Codex / gpt-6-astra / xhigh                                        | Trusted, all permissions true, skills on              | Accepted / accepted       | #52 evidence (`codex-images-2026-09-16.md`, private historical record); verified fresh threads only; resumed unavailable |
-| Antigravity / no version or model selected                         | Restricted                                            | Unsupported / unsupported | Not in this release; #54 and #55 belong to a later epic                                                                  |
-| Antigravity / no version or model selected                         | Trusted, all permissions true, skills on              | Unsupported / unsupported | Not in this release; #54 and #55 belong to a later epic                                                                  |
-| Grok / any other well-formed CLI identity                          | The three Grok rooms above, contract observed         | Available / available     | #69 policy: version is evidence, not a gate. No retained evidence exists for an unlisted identity                        |
-| Claude or Codex / any other well-formed or unreadable CLI identity | The two rooms above, all required observations passed | Available / available     | #85 policy: version is evidence, not a gate. No retained evidence exists for an unlisted identity                        |
-| Any missing or wrong-provider mapping key                          | Any                                                   | Unavailable / unavailable | Unsupported in the shipped product; never implicitly a staging candidate                                                 |
+| Provider / requested model / effort                                | Room                                                | Initial / retrieval       | Status and owner                                                                                                         |
+| ------------------------------------------------------------------ | --------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Grok / provider default / provider default                         | Restricted, skills off, command mode off            | Accepted / accepted       | Exact build above; both migration regressions passed below                                                               |
+| Grok 1.0.30 / provider default / high, observed `grok-4.6`         | All permissions true, skills on, sandboxed commands | Accepted / accepted       | #56; current evidence below                                                                                              |
+| Grok 1.0.30 / provider default / provider default                  | Restricted, skills off, command mode off            | Accepted / accepted       | #56; current evidence below                                                                                              |
+| Grok 1.0.34 / provider default / provider default                  | Restricted, skills off, command mode off            | Accepted / accepted       | #69; evidence (`grok-images-2026-09-17.json`, private historical record) and the issue-69 section below                  |
+| Grok 1.0.34 / provider default / high                              | All permissions true, skills on, sandboxed commands | Accepted / accepted       | #69; evidence (`grok-images-2026-09-17.json`, private historical record) and the issue-69 section below                  |
+| Grok 1.0.34 / provider default / high                              | All permissions true, skills on, trusted commands   | Accepted / accepted       | #69; evidence (`grok-images-2026-09-17.json`, private historical record) and the issue-69 section below                  |
+| Claude / opus / xhigh                                              | Restricted                                          | Accepted / accepted       | #53; recorded build and linked evidence below                                                                            |
+| Claude / opus / xhigh                                              | Trusted, all permissions true, skills on            | Accepted / accepted       | #53; recorded build and linked evidence below                                                                            |
+| Claude 2.1.274 / opus / xhigh                                      | Restricted                                          | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-17.json`, private historical record)                     |
+| Claude 2.1.274 / opus / xhigh                                      | Trusted, all permissions true, skills on            | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-17.json`, private historical record)                     |
+| Claude 2.1.276 / opus / xhigh                                      | Restricted                                          | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18.json`, private historical record)                     |
+| Claude 2.1.276 / opus / xhigh                                      | Trusted, all permissions true, skills on            | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18.json`, private historical record)                     |
+| Claude 2.1.277 / opus / xhigh                                      | Restricted                                          | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18-b.json`, private historical record)                   |
+| Claude 2.1.277 / opus / xhigh                                      | Trusted, all permissions true, skills on            | Accepted / accepted       | #57 owner decision; its own six-run set (`claude-images-2026-09-18-b.json`, private historical record)                   |
+| Codex / gpt-6-astra / xhigh                                        | Restricted                                          | Accepted / accepted       | #52 evidence (`codex-images-2026-09-16.md`, private historical record); verified fresh threads only; resumed unavailable |
+| Codex / gpt-6-astra / xhigh                                        | Trusted, all permissions true, skills on            | Accepted / accepted       | #52 evidence (`codex-images-2026-09-16.md`, private historical record); verified fresh threads only; resumed unavailable |
+| Antigravity / no version or model selected                         | Restricted                                          | Unsupported / unsupported | Not in this release; #54 and #55 belong to a later epic                                                                  |
+| Antigravity / no version or model selected                         | Trusted, all permissions true, skills on            | Unsupported / unsupported | Not in this release; #54 and #55 belong to a later epic                                                                  |
+| Grok / any other well-formed CLI identity                          | Any room, contract observed                         | Available / available     | #69 policy: version is evidence, not a gate. No retained evidence exists for an unlisted identity                        |
+| Claude or Codex / any other well-formed or unreadable CLI identity | Any room, all required observations passed          | Available / available     | #85 policy: version is evidence, not a gate. No retained evidence exists for an unlisted identity                        |
+| Any missing or wrong-provider mapping key                          | Any                                                 | Unavailable / unavailable | Unsupported in the shipped product; never implicitly a staging candidate                                                 |
 
 `accepted` requires linked evidence; `pending` is incomplete or awaiting prerequisites; `unsupported` has no enabled route; `failed` records an attempted run that did not pass. Failed runs retain their partial evidence and cannot become accepted by relabeling them. Future-provider acceptance is not required to complete #50; both current Grok regression runs are required.
 
@@ -196,18 +197,18 @@ The review-fix runs (`image-support-review-fixes-2026-09-15.json`, private histo
 
 ## Claude native image mapping
 
-Claude's registered bridge is `claude-mcp-image`. Its gate needs a verified
-native tool inventory and an observed actual assistant-message model. The
+Claude's registered bridge is `claude-mcp-image`. Its gate needs a connected
+process whose observed native tool inventory has not failed; the room
+configuration and the turn model decide nothing. The
 recorded runs requested `opus` at `xhigh` and observed `claude-opus-5`; since
 #105 those values are evidence, like the CLI identity has been since #85, and
 the gate compares none of them. `2.1.268 (Claude Code)` is the identity the
 first verification ran on, recorded in
 Claude image evidence (`claude-images-2026-09-16.json`, private historical record), and every
 entry below records another identity that was exercised. The report separately
-checks initial delivery and retrieval. A missing inventory or turn-model
-observation, a failed inventory and a room configuration outside the two
-accepted ones stay unavailable on any identity, model or effort, listed or
-unlisted; a model without vision fails at delivery with the provider's error.
+checks initial delivery and retrieval. A disconnected process and a failed
+inventory stay unavailable on any identity, model or effort, listed or unlisted;
+a model without vision fails at delivery with the provider's error.
 
 `2.1.274 (Claude Code)` is a second accepted entry, with the same requested and
 observed tuple. The managed CLI moved to it on 2026-09-17 and the exact-build gate
@@ -215,14 +216,14 @@ closed every Claude image path. #57 reserved new Claude and Codex CLI versions t
 the owner, and Bill accepted this build during the #57 run. That is an owner
 decision, not something staging grants. The entry rests only on its own six runs (`claude-images-2026-09-17.json`, private historical record). They cover controller, browser and terminal in both rooms on one recorded source commit, each passing the first
 image, a later image in the same provider session and fresh retrieval in a
-distinct session. Each run re-asserts the two-copy retrieval replay and the 8 MiB
+distinct session. Each run re-asserts the two-copy retrieval replay and the then 8 MiB
 frame bound, so this build re-measures the transport assumption and does not inherit it. No 2.1.268 evidence is reused, and that record is unchanged. The
 versions between the two carry no evidence of their own; under #85 they are
 decided by the same live requirements as any other identity. Add
-`--evidence-issue 57` to the commands below to rerun that set. The accepted room
-configurations are all task permissions off with skills off and command mode
-`off`, or all permissions on with skills on and command mode `trusted`.
-Sandboxed commands are not trusted coverage.
+`--evidence-issue 57` to the commands below to rerun that set. Those runs covered
+two rooms: all task permissions off with skills off and command mode `off`, and
+all permissions on with skills on and command mode `trusted`. Since local ticket
+0001 they record coverage, not the only eligible rooms.
 
 `2.1.276 (Claude Code)` is a third accepted entry on the same requested and
 observed tuple. The managed CLI moved to it on 2026-09-18 and again closed every
@@ -244,12 +245,17 @@ is reused, and no earlier record changes. 2.1.278 and anything newer has no run
 set of its own: since #85 such a build keeps the existing image paths when the
 live requirements above pass, and gains no visual acceptance by doing so.
 
-An actual successful text turn must establish the native tool inventory and
-model before image dispatch. Initialization's model catalogue is not observed
-turn identity. A fresh connection therefore refuses images with a reason until
-that text turn completes; use the existing explicit `/retry` for a previously
-rejected image. Changed, ambiguous or missing turn identity closes support.
-There is no automatic pixel retry and no candidate runtime switch.
+Images are available from connection, so the first message can carry one. The
+native tool inventory is observed in each turn's init event, before the model
+answers. A turn whose inventory lists an unexpected native tool is aborted, as
+any turn is. An inventory that fails verification without an unexpected tool,
+such as one missing `read_conversation`, re-registers the retrieval bridge as
+unavailable at once; registration ends the turn's attachment authority, so no
+`read_attachment` result is served for the rest of that turn, and initial images
+stay closed until a later turn's inventory passes. A passing inventory changes
+nothing: the bridge registered at connection keeps the authority the turn began
+with. The turn model is recorded as evidence and a diagnostic only. There is no
+automatic pixel retry and no candidate runtime switch.
 
 Initial delivery uses native stream-json content arrays with a text prompt,
 ordered message/attachment associations, and PNG `image` blocks with a base64
@@ -261,11 +267,11 @@ checks. It holds the typed result until the complete JSON-RPC response reaches
 Serialization failure returns a bounded attachment error instead of leaving the
 request pending. Ordinary tool results keep their existing text form.
 
-The transport keeps the 8 MiB reader limit and 256 KiB envelope allowance. For a
-complete JSON request or response `J`, its conservative size is the larger UTF-8
-byte length of `J` and `JSON.stringify(J)`. Initial replay reserves one such
-copy plus the allowance; retrieval reserves two copies plus the allowance.
-UTF-8 bytes are at least as strict as the reader's JavaScript character count.
+The transport keeps a 256 KiB envelope allowance under the 64 MiB provider
+reader bound. For a complete JSON request or response `J`, its conservative size
+is the larger UTF-8 byte length of `J` and `JSON.stringify(J)`. Initial replay
+reserves one such copy plus the allowance; retrieval reserves two copies plus
+the allowance. The reader counts UTF-8 bytes.
 The observed build replays initial content once and MCP image content twice.
 The allowance covers the added replay fields and image-block representation;
 unknown builds cannot reuse this assumption. Tests exercise full maximum-size
@@ -317,8 +323,9 @@ controller and real CLI PTY results. Initial delivery and historical retrieval
 remain separately reported. When #56 landed, unknown builds were unavailable.
 [Issue #69](#grok-observed-runtime-contract-and-1034-coverage-issue-69) later
 replaced that exact-build gate; this section stays as the record of what ran on
-1.0.30. Unverified room configurations stay unavailable, and the existing 1.0.13
-restricted entry remains accepted.
+1.0.30. Since local ticket 0001 a current build is eligible in every room
+configuration; the rooms below are the coverage that ran. The existing 1.0.13
+restricted entry remains accepted and restricted.
 
 | Required room    | Effective policy                                                    | Effort                                            |
 | ---------------- | ------------------------------------------------------------------- | ------------------------------------------------- |
@@ -418,16 +425,17 @@ The tuple also carries the existing observations: `nativeInventoryVerified` for
 the exact native tool inventory, the requested and observed model, and the
 effective permissions, skills and command mode. `grokInitialImageGate` accepts
 only a complete contract with policy `isolated-rooms-v1`, a verified native
-inventory, the provider-default request, observed `grok-4.6` and one of three
-rooms:
+inventory and an observed session model. When #69 landed it also required the
+provider-default request, observed `grok-4.6` and one of three rooms
+(restricted; all permissions with skills on and sandboxed commands; the same with
+trusted commands). #105 removed the model conditions, and local ticket 0001
+removed the room condition: room permissions, skills and command mode do not
+change image delivery, so a current build is eligible in every room
+configuration and the policy is recorded as evidence.
 
-- restricted: edits, commands and network false, host skills off, command mode `off`
-- sandboxed commands: all three true, host skills on, command mode `sandboxed`
-- trusted commands: all three true, host skills on, command mode `trusted`
-
-A missing contract, an unknown policy name, an unobserved check, inventory, model
-or room policy reports `not_observed`. A check that is false, a failed inventory,
-a wrong model or a mixed room reports `unsupported`. Unobserved and failed checks
+A missing contract, an unknown policy name, an unobserved check, inventory or
+model reports `not_observed`. A check that is false or a failed inventory
+reports `unsupported`. Unobserved and failed checks
 are collected separately, so a failed check decides the status and both are named.
 Both statuses close the initial and retrieval paths. The contract is never read from room or
 user configuration, and the adapter throws and closes on any failed start step, so
@@ -435,9 +443,8 @@ a tuple only exists after every check passed. `imageSupport()` also reports
 unavailable whenever the native process is closed, which covers interruption and
 a later inventory revocation.
 
-The reason lists every failed observed field and the effective room
-configuration. On the current path it ends with `live CLI <identity>` as a
-diagnostic. It never says a version is unaccepted. The identity must still be
+The reason lists every failed observed field. On the current path it ends with
+`live CLI <identity>` as a diagnostic. It never says a version is unaccepted. The identity must still be
 readable: a version string that is missing or not of the form
 `grok X.Y.Z (build) [stable]` reports `not_observed`, because the identity is
 required evidence and an unreadable one cannot be told apart from the legacy build.
@@ -450,9 +457,10 @@ required evidence and an unreadable one cannot be told apart from the legacy bui
 - Native compaction stayed pinned to a separate constant at the time. #105
   removed that pin: the route is selected after every successful start and
   validated on the actual operation, and the legacy restriction is unchanged.
-- The gate reads the effective command mode and nothing else about trust.
-  `GrokImageTuple` has no trust-source field. User-level `trustedCommands.workspaces`
-  and `--trusted-commands` both resolve to `trusted`, and either is accepted.
+- The gate reads nothing about trust on a current build, and only the legacy
+  restriction reads the effective command mode. `GrokImageTuple` has no
+  trust-source field. User-level `trustedCommands.workspaces` and
+  `--trusted-commands` both resolve to `trusted`.
   `imageEvidence.commandModeSource` records which one applied.
 - Effort is test configuration, not a gate input.
 - Native filesystem and terminal capabilities, `image_gen` and native skill
@@ -463,8 +471,8 @@ required evidence and an unreadable one cannot be told apart from the legacy bui
   records are unchanged. The 1.0.34 runs are a separate entry.
 
 `test/image-support.test.ts` covers arbitrary well-formed identities, every
-missing, unknown and failed observation, mixed rooms, the reason text and the
-legacy restriction. `test/providers.test.ts` covers the same through
+missing, unknown and failed observation, every room configuration, the reason
+text and the legacy restriction. `test/providers.test.ts` covers the same through
 `GrokAdapter` on a fake native process, for both trust sources, and
 `test/trusted-commands.test.ts` covers both sources against a synthetic home.
 None of them launches Grok or reads a real user config.
@@ -534,9 +542,9 @@ does not satisfy browser or terminal acceptance.
 
 ## Codex native image mapping
 
-Codex's registered bridge is `codex-dynamic-image`. Its gate needs verified
-native policy checks, a verified fresh thread and a native session that reported
-its model and effort. The recorded runs requested and observed `gpt-6-astra` at
+Codex's registered bridge is `codex-dynamic-image`. Its gate needs the native
+policy checks that startup enforces and a native session that reported its model
+and effort, on a fresh or a resumed thread, in any room configuration. The recorded runs requested and observed `gpt-6-astra` at
 `xhigh`; since #105 those values are evidence, like the CLI identity has been
 since #85, and the gate compares none of them, so the reported
 `gpt-6-astra` at `high` case is eligible when the same checks pass.
@@ -545,20 +553,25 @@ verification record (`codex-images-2026-09-16.md`, private historical record) li
 controller and built-CLI PTY first-image, later-image and historical-retrieval
 results in both required rooms. Initial and retrieval reports remain separate.
 
-Restricted rooms have edits, commands and network off, skills off and command
-mode `off`. Trusted rooms have all permissions on, skills on and command mode
-`trusted`, granted by `--trusted-commands` in these runs. Native filesystem,
-network and tool restrictions stay the same in both configurations.
+The recorded runs used two rooms. Restricted rooms have edits, commands and
+network off, skills off and command mode `off`. Trusted rooms have all
+permissions on, skills on and command mode `trusted`, granted by
+`--trusted-commands` in these runs. Native filesystem, network and tool
+restrictions stay the same in both configurations, which is why room policy no
+longer decides image eligibility.
 
 The user approved #51's revised acceptance criterion on 2026-09-16: zero selected
 environments and zero projected roots, with separate checks of direct workspace
 read, no write grants, network denial, named-profile selection, approval routing
 and disabled native features. Cold resume succeeds but returns one environment
-and one root in both rooms. The user separately approved fresh-thread-only support;
-resumed sessions reject both image paths, even if other checks happen to match.
-[Issue #63](https://github.com/mcgloneb/ai-chat/issues/63) tracks that mismatch.
-Text operation continues. Use the existing explicit retry after establishing an
-eligible fresh session; images are never retried automatically.
+and one root in both rooms. The user at first approved fresh-thread-only support,
+and [issue #63](https://github.com/mcgloneb/ai-chat/issues/63) held resumed
+images. Bill approved images on resumed threads for chittr/chittr in local ticket
+0001: the environment and root counts are now recorded as evidence, and image
+eligibility uses the same native policy result that admits the thread at
+startup. A thread whose other policy observations fail still never starts.
+Whether a resumed thread's environment is acceptable as a session-level policy
+question remains open. Images are never retried automatically.
 
 Initial delivery resolves only the current required messages and sends ordered
 association text plus native `image.url` items. Context, seeds, checkpoints and
@@ -568,9 +581,9 @@ the in-process JSON-RPC response boundary as `inputImage.imageUrl`. Ordinary
 `inputText` tool results remain unchanged. Revocation and complete-frame checks
 run after serialization and immediately before the transport write.
 
-The transport keeps the existing 8 MiB character reader bound and 256 KiB
-headroom. It measures both the full wire JSON and its escaped replay in UTF-8
-bytes, which conservatively bounds JavaScript character count. The tested build
+The transport keeps 256 KiB of headroom under the 64 MiB provider reader bound.
+It measures both the full wire JSON and its escaped replay in UTF-8 bytes, the
+unit the reader bounds. The tested build
 replays one initial/result copy per observed event; that observation belongs to
 that build's runs. The bound itself does not rest on it: `assertCodexFrame` and
 `assertClaudeFrame` measure every frame at runtime, on any identity, so an
@@ -590,6 +603,10 @@ The record (`codex-images-2026-09-16.md#rerun`, private historical record) conta
 original rerun commands and the cold-resume rejection checks.
 
 ## Newer-CLI eligibility live record (issue #105)
+
+Historical record, dated 2026-09-24. Its room configurations, fresh-thread rule
+and first-text-turn requirement were the rules then; [the product
+contract](#product-contract) states the current ones.
 
 #105 removed every model/effort tuple comparison from the image gates and every
 exact CLI pin from startup and maintenance. The bounded live evidence, recorded
@@ -665,6 +682,10 @@ They do not make a build or model visually verified for any other room, entry
 point or provider, and they add no eligibility condition.
 
 ## Integrated acceptance (issue #57)
+
+Historical record, dated 2026-09-18. Its rooms, its resumed-Codex refusal and its
+first-text-turn requirement describe that release; [the product
+contract](#product-contract) states the current rules.
 
 **Status: closed on 2026-09-18 with two rows failed upstream.** The
 matrix record (`integrated-images-2026-09-17.json`, private historical record) lists all 46 inventory

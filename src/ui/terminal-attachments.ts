@@ -9,6 +9,8 @@ import {
   attachmentHelp,
 } from './attachment-input.js';
 import { readClipboardImage } from './clipboard.js';
+import { formatImageRecipientStatus } from '../image-warning.js';
+import { projectRoom } from '../snapshot.js';
 
 /** In-process terminal capability; never installed on the shared controller or web routes. */
 export class TerminalAttachments {
@@ -37,6 +39,16 @@ export class TerminalAttachments {
     };
     current(); // Establish terminal/session authority before any filesystem operation.
     if (action.kind === 'help') return attachmentHelp;
+    if (action.kind === 'status') {
+      // Read-only: the saved caption decides the recipients; nothing is staged or sent.
+      const snapshot = projectRoom(room);
+      return formatImageRecipientStatus({
+        line: room.session.composerDraft ?? '',
+        participants: snapshot.agents,
+        messages: room.session.messages,
+        invalidRoom: Boolean(snapshot.fatal),
+      });
+    }
     const attachments = room.session.composerAttachments ?? [];
     if (action.kind === 'list')
       return attachments.length

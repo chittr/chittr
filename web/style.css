@@ -201,11 +201,6 @@ a {
 .participant-settings dd {
   margin: 0;
 }
-.participant-image-reason {
-  display: block;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
 .avatar {
   width: 33px;
   height: 33px;
@@ -387,15 +382,6 @@ h1 {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 310px;
-}
-.agent-image-status {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 6px;
-  line-height: 1.4;
-}
-.agent-image-status.unsupported {
-  color: #9b3e2e;
 }
 .agent-queue {
   font-size: 9px;
@@ -1291,14 +1277,16 @@ textarea::placeholder {
   font-size: 11px;
   line-height: 1.45;
 }
+.image-status-warning summary {
+  margin-top: 3px;
+  cursor: pointer;
+}
 .image-status-warning ul {
   margin: 3px 0 0 18px;
   padding: 0;
+  overflow-wrap: anywhere;
 }
 @media (prefers-color-scheme: dark) {
-  .agent-image-status.unsupported {
-    color: #efa68f;
-  }
   .image-status-warning {
     background: #342b1c;
     color: #f1d7a6;

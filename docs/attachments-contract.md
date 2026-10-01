@@ -12,15 +12,32 @@ terminal and historical-retrieval work in issues #33, #34 and #35.
 
 The pilot accepts complete PNG (`image/png`) images. The host validates magic
 bytes, declared media type and dimensions before staging. PNG structure, chunk
-checksums and bounded inflation are validated. Each image is at most 1 MiB, each
-message or draft contains at most four images and their aggregate raw size is at
-most 3 MiB.
+checksums and bounded inflation are validated. Each image is at most 3 MiB, each
+message or draft contains at most 20 images and their aggregate raw size is at
+most 6 MiB. These numbers come from Claude's limits, the strictest of the
+providers: 3 MiB is 4 MiB as base64, under its 5 MB per-image limit on
+Bedrock/Vertex; 6 MiB is about a quarter of its 32 MB request cap; and 20 images
+keeps one message from triggering its many-image rule by itself. A rejection
+names the limit it applied. `src/attachment-limits.ts` holds them for the host,
+terminal and browser.
 Width and height are each at most 4096 pixels and the image is at most 16,777,216
-pixels. A native batch also carries at most 3 MiB of raw images, so separately
-valid queued messages split across turns when needed. The native image parts
-plus 256 KiB of envelope headroom must fit the existing 8 MiB provider frame
-limit, and the adapter checks the complete serialized native request before
-sending it.
+pixels. A native batch also carries at most 20 images and 6 MiB of raw images, so
+separately valid queued messages split across turns when needed. The native image
+parts plus 256 KiB of envelope headroom must fit the 64 MiB provider reader bound
+(`providerEventBytes` in `src/process.ts`), including the copies a provider echoes
+back, and the adapter checks the complete serialized native request before
+sending it. That reader splits provider stdout into lines itself and fails the
+connection with `Oversized provider event` as soon as an unterminated line passes
+64 MiB, so a runaway line never buffers past the bound.
+
+The browser prepares images before upload. A non-interlaced PNG whose long edge
+is at most 2000 px and whose size is within the per-image limit uploads
+byte-for-byte unchanged. Anything else the browser can decode, including an
+interlaced PNG, is scaled down (never up) to at most 2000 px on the long edge
+and encoded as PNG, then scaled further until it fits 3 MiB; the upload keeps
+the original name with a `.png` extension. A file the browser cannot decode, or
+cannot shrink enough, fails without an upload. The host contract itself stays
+PNG-only, and terminal uploads are not resized.
 
 An attachment reference contains only:
 
@@ -63,6 +80,16 @@ The route is dispatched before the JSON reader, enforces the limit while reading
 and returns `{attachment}` with status 201. It shares the existing authenticated,
 same-origin `/api/` boundary. C4 supplies file or clipboard bytes to the same
 controller method; it does not pass a file path into this contract.
+
+The browser keeps the prepared bytes on the upload item, so an in-page retry
+sends exactly what the first attempt sent under the same operation ID. Its
+persisted upload state still holds no image bytes: for a converted image it
+records the selected file's name, size and SHA-256 separately from the uploaded
+PNG's name, size and SHA-256. After a reload, reselecting the original file
+re-runs the conversion and resumes the same operation only when the new PNG's
+SHA-256 matches the recorded one. Otherwise the item fails and asks for the image
+to be removed and attached again; no changed content is sent under the old
+operation and no second operation is created for it.
 
 Saved draft text remains in `Session.composerDraft` for compatibility. Ordered
 references live in `Session.composerAttachments`; `composerDraftRevision` is the
@@ -260,14 +287,15 @@ boundary. Unsupported adapter tuples fail with an accurate unavailable delivery;
 metadata is never treated as delivered pixels.
 
 The room classifies that support per recipient at its live adapter before any
-provider attempt. An adapter without an initial-image route, or a Grok adapter
-outside its observed runtime contract or room policy, has only its image-bearing
-deliveries saved as `failed`, with no provider attempt ID and a byte-free
-per-recipient `Delivery.rationale` naming the missing route or each failed or
-missing condition from live effective state: room permissions, skills and
-command mode, the runtime contract and the native inventory. The live CLI build
-and the observed model are appended as diagnostics; since #105 neither the
-requested nor the observed model is a condition. That
+provider attempt. An adapter without an initial-image route, or one whose live
+observations fail or are missing, has only its image-bearing deliveries saved as
+`failed`, with no provider attempt ID and a byte-free per-recipient
+`Delivery.rationale` naming the missing route or each failed or missing
+condition from live effective state: for Grok the runtime contract and the
+native inventory. Room permissions, skills and command mode are not conditions,
+except for the legacy Grok 1.0.13 build. The live CLI build and the observed
+model are appended as diagnostics; since #105 neither the requested nor the
+observed model is a condition. That
 rejection reserves no attempt, charges no exchange budget, calls neither
 `adapter.run` nor `adapter.close`, and leaves the connection ready, so text-only
 messages to the same recipient continue in order and other recipients keep their
@@ -283,17 +311,16 @@ as pixel delivery.
 The historical C2 initial tuple is Grok Build 1.0.13
 (`5e9a58528b76`) with requested model `provider default` and observed model
 `grok-4.6`, under `edits=false`, `commands=false`, `network=false`, skills
-disabled, the isolated native profile and exact room MCP inventory. The room restrictions remain in place for that build; since #105 the model is evidence only. A policy mismatch leaves initial images
+disabled, the isolated native profile and exact room MCP inventory. The room restrictions remain in place for that build only; since #105 the model is evidence only. A policy mismatch leaves initial images
 unavailable while preserving text support. The separately verified Grok 1.0.30 image mapping, required room coverage and current rerun commands are documented in
 [image support](image-support.md#grok-1030-image-coverage). Since #69 a newer Grok CLI is gated by the [observed runtime contract](image-support.md#grok-observed-runtime-contract-and-1034-coverage-issue-69), not by its version. Effort is recorded as a test configuration and native observation, not an image gate. The historical Codex C1 result remains unverified under its original one-root
 criterion. The separately accepted fresh-thread Codex mapping and revised policy
 disposition are documented in [image support](image-support.md#codex-native-image-mapping). Claude's older
 2.1.257 result remains historical. Since #85 a newer Claude or Codex CLI is
 decided by the same live requirements as a recorded one, not by its version. The
-approved Claude mapping, text-turn
-identity prerequisite and rerun procedure are documented in
+approved Claude mapping and rerun procedure are documented in
 [image support](image-support.md#claude-native-image-mapping).
-Antigravity connects on any version whose startup enforcement probe observes the room policy hook denying the selected profile's native write, and Antigravity images are unsupported in this release on any version. Cold-resumed Codex image paths remain unavailable. [Image release status](compatibility.md#image-release-status-issue-58) lists the configurations that are enabled now.
+Antigravity connects on any version whose startup enforcement probe observes the room policy hook denying the selected profile's native write, and Antigravity images are unsupported in this release on any version. Resumed Codex threads that pass startup's native policy checks take images like fresh ones. [Image release status](compatibility.md#image-release-status-issue-58) lists the configurations that are enabled now.
 
 The C2 native-initial acceptance record (`persistent-image-initial-2026-09-12.json`, private historical record)
 passed through `RoomController.stageAttachment` and `RoomController.submit` at
@@ -341,7 +368,7 @@ interruption, so its old MCP connection cannot issue work into the next turn.
 The MCP boundary emits a text association containing message ID, attachment
 metadata and content hash, followed by an MCP `image` item. It revalidates C2 PNG,
 size, dimension and hash constraints and reserves 256 KiB of enclosing transport
-headroom below the 8 MiB frame limit. Missing/corrupt bytes and unavailable bridges
+headroom below the 64 MiB provider reader bound. Missing/corrupt bytes and unavailable bridges
 produce bounded byte-free errors. Ordinary text tools retain their result shapes.
 Codex's ordinary text constructor still refuses typed images. Its dedicated
 in-process response boundary unwraps `codex-dynamic-image` results only after
@@ -349,9 +376,9 @@ checking current thread/turn authority and accepted support. Final serialization
 checks the full response, then rechecks authority immediately before dispatch.
 
 The shared inventory reaches Claude MCP, Codex dynamic tools, Grok isolated MCP
-and Antigravity's `call_mcp_tool` hook. Grok, Claude and fresh-thread Codex have
-registered native retrieval bridges, decided by their live observations.
-Cold-resumed Codex remains unavailable and Antigravity images are unsupported in this release; shared registration is not an image-capability declaration. There is no new Antigravity
+and Antigravity's `call_mcp_tool` hook. Grok, Claude and Codex, on fresh and
+resumed threads, have registered native retrieval bridges, decided by their live
+observations. Antigravity images are unsupported in this release; shared registration is not an image-capability declaration. There is no new Antigravity
 version allowance or native image-generation/filesystem permission.
 
 Public-message projections preserve ordered metadata in normal context, required

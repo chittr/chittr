@@ -10,6 +10,7 @@ import {
 import { createRoot } from 'react-dom/client';
 import { api, nextDraftVersion, subscribeEvents, uploadImage } from './api';
 import { ComposerController, byteSize } from './composer';
+import { prepareImage } from './image-prepare';
 import { HostImage, ImageViewer, imageSummary } from './images';
 import type { AttachmentMetadata } from '../src/types.js';
 import { Avatar, CopyButton, MessageBody, MessageCard, QuestionActions } from './message';
@@ -21,7 +22,7 @@ import type { CommandResult, WebState } from '../src/web-types.js';
 import { contextPercent, formatContextUsage } from '../src/context-usage.js';
 import { formatReplyDraft, parseReplyDraft } from '../src/reply.js';
 import { ComposerHistory } from '../src/composer-history.js';
-import { imageDraftWarning } from '../src/image-warning.js';
+import { imageDraftWarning, imageWarningLine } from '../src/image-warning.js';
 import {
   completionContext,
   fileReferenceActive,
@@ -43,6 +44,7 @@ function App() {
           state: () => api<WebState>('state'),
           saveDraft: (update, keepalive) => api('draft', update, keepalive),
           upload: uploadImage,
+          prepareImage,
           draftVersion: nextDraftVersion,
         },
         sessionStorage,
@@ -465,25 +467,6 @@ function App() {
                     <dt>Effort</dt>
                     <dd>{agent.effort}</dd>
                   </div>
-                  {agent.enabled && agent.initialImageSupport && (
-                    <div>
-                      <dt>Initial images</dt>
-                      <dd
-                        title={
-                          agent.initialImageSupport.available
-                            ? undefined
-                            : agent.initialImageSupport.reason
-                        }
-                      >
-                        {agent.initialImageSupport.status.replace('_', ' ')}
-                        {!agent.initialImageSupport.available && (
-                          <span className="participant-image-reason">
-                            {agent.initialImageSupport.reason}
-                          </span>
-                        )}
-                      </dd>
-                    </div>
-                  )}
                 </dl>
               </div>
               <span className={`presence ${agent.connection !== 'ready' ? 'offline' : ''}`} />
@@ -580,20 +563,6 @@ function App() {
                   <div className="agent-detail" title={detail}>
                     {detail}
                   </div>
-                  {agent.initialImageSupport && (
-                    <div
-                      className={`agent-image-status ${agent.initialImageSupport.status}`}
-                      title={
-                        agent.initialImageSupport.available
-                          ? undefined
-                          : agent.initialImageSupport.reason
-                      }
-                    >
-                      Initial images: {agent.initialImageSupport.status.replace('_', ' ')}
-                      {!agent.initialImageSupport.available &&
-                        ` · ${agent.initialImageSupport.reason}`}
-                    </div>
-                  )}
                   <div className="agent-queue">
                     {agent.pending.queued ? `${agent.pending.queued} queued` : 'No queued messages'}
                     {agent.pending.capped ? ` · ${agent.pending.capped} at follow-up limit` : ''}
@@ -816,7 +785,7 @@ function App() {
                   event.preventDefault();
                   if (disabled) return;
                   if (files.length) composer.stage(files);
-                  else composer.report('Drop PNG files to attach images. URLs are not fetched.');
+                  else composer.report('Drop image files to attach them. URLs are not fetched.');
                 }}
               >
                 {replyTo && (
@@ -942,11 +911,11 @@ function App() {
                             </button>
                           ) : (
                             <label>
-                              Retry {item.filename}
+                              Retry {item.source?.name ?? item.filename}
                               <input
-                                aria-label={`Reselect ${item.filename}`}
+                                aria-label={`Reselect ${item.source?.name ?? item.filename}`}
                                 type="file"
-                                accept="image/png"
+                                accept="image/*"
                                 onChange={(event) => {
                                   const file = event.target.files?.[0];
                                   if (file) composer.retryUpload(item, file);
@@ -968,21 +937,19 @@ function App() {
                 </div>
                 {imageWarning && (
                   <div className="image-status-warning" role="status">
-                    <strong>Current image status</strong>
-                    {imageWarning.groups.map((group) => (
-                      <div key={group.status}>
-                        <span>
-                          {group.status === 'not_observed' ? 'Not observed' : 'Unsupported'}
-                        </span>
-                        <ul>
-                          {group.recipients.map((recipient) => (
-                            <li key={recipient.id}>
-                              @{recipient.id}: {recipient.reason}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                    {imageWarning.recipients.map((recipient) => (
+                      <div key={recipient.id}>{imageWarningLine(recipient)}</div>
                     ))}
+                    <details>
+                      <summary>Details</summary>
+                      <ul>
+                        {imageWarning.recipients.map((recipient) => (
+                          <li key={recipient.id}>
+                            @{recipient.id}: {recipient.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   </div>
                 )}
                 {images.error && (
@@ -1006,7 +973,7 @@ function App() {
                 <input
                   ref={fileInput}
                   type="file"
-                  accept="image/png"
+                  accept="image/*"
                   multiple
                   hidden
                   aria-label="Select images"
