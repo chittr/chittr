@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please read [SUPPORT.md](https://github.com/mcgloneb/ai-chat/blob/main/SUPPORT.md)
+        Please read [SUPPORT.md](https://github.com/chittr/chittr/blob/main/SUPPORT.md)
         first. Support here is best-effort with no response-time commitment.
   - type: textarea
     id: question

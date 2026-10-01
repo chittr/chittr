@@ -30,7 +30,7 @@ npm run quality
 
 ## Checklist
 
-- [ ] I opened or linked an issue first, or this is a small self-evident fix.
+- [ ] I opened or linked an issue first, the work is tracked in the maintainer's ticket store and named above, or this is a small self-evident fix.
 - [ ] `npm run quality` passes on a supported host, or I have said which check fails and why.
 - [ ] Tests cover the behaviour at the boundary this change touches, or I have said why not.
 - [ ] Documentation that this change makes wrong is updated here.

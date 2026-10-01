@@ -28,10 +28,10 @@ useful thing to paste into a report.
 
 | What you have                         | Where it goes                                                                                      |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| "How do I…" or "is this supposed to…" | A [question issue](https://github.com/mcgloneb/ai-chat/issues/new/choose)                          |
-| Something is broken                   | A [bug issue](https://github.com/mcgloneb/ai-chat/issues/new/choose), with `ai-chat doctor` output |
-| A feature idea                        | A [feature issue](https://github.com/mcgloneb/ai-chat/issues/new/choose)                           |
-| Wrong or missing documentation        | A [documentation issue](https://github.com/mcgloneb/ai-chat/issues/new/choose)                     |
+| "How do I…" or "is this supposed to…" | A [question issue](https://github.com/chittr/chittr/issues/new/choose)                          |
+| Something is broken                   | A [bug issue](https://github.com/chittr/chittr/issues/new/choose), with `ai-chat doctor` output |
+| A feature idea                        | A [feature issue](https://github.com/chittr/chittr/issues/new/choose)                           |
+| Wrong or missing documentation        | A [documentation issue](https://github.com/chittr/chittr/issues/new/choose)                     |
 | A security vulnerability              | Privately, via [SECURITY.md](SECURITY.md). Never a public issue                                    |
 | Behaviour by a person in this project | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)                                                           |
 | You want to change the code           | [CONTRIBUTING.md](CONTRIBUTING.md)                                                                 |

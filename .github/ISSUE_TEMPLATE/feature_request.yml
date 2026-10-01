@@ -6,8 +6,8 @@ body:
     attributes:
       value: |
         This is a one-person pilot with a deliberately narrow scope. Check
-        [the roadmap](https://github.com/mcgloneb/ai-chat/blob/main/docs/roadmap.md) and
-        [FEATURES.md](https://github.com/mcgloneb/ai-chat/blob/main/FEATURES.md) first.
+        [the roadmap](https://github.com/chittr/chittr/blob/main/docs/roadmap.md) and
+        [FEATURES.md](https://github.com/chittr/chittr/blob/main/FEATURES.md) first.
         Most requests are declined or parked; that is not a comment on the idea.
   - type: textarea
     id: problem
