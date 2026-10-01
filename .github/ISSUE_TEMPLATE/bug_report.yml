@@ -6,9 +6,9 @@ body:
     attributes:
       value: |
         Do not use this form for a security vulnerability — report it privately through
-        [SECURITY.md](https://github.com/mcgloneb/ai-chat/blob/main/SECURITY.md).
+        [SECURITY.md](https://github.com/chittr/chittr/blob/main/SECURITY.md).
 
-        Please check [known limits](https://github.com/mcgloneb/ai-chat/blob/main/docs/compatibility.md)
+        Please check [known limits](https://github.com/chittr/chittr/blob/main/docs/compatibility.md)
         first; several provider behaviours are documented as unsupported in this preview.
   - type: textarea
     id: what-happened

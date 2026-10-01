@@ -26,8 +26,8 @@ threads.
 Small, obviously-correct fixes — a broken link, a typo, a narrow bug with a test — do
 not need a prior issue.
 
-Issues labelled [`good first issue`](https://github.com/mcgloneb/ai-chat/labels/good%20first%20issue)
-and [`help wanted`](https://github.com/mcgloneb/ai-chat/labels/help%20wanted) are the
+Issues labelled [`good first issue`](https://github.com/chittr/chittr/labels/good%20first%20issue)
+and [`help wanted`](https://github.com/chittr/chittr/labels/help%20wanted) are the
 best first contributions. `bug`, `enhancement`, `documentation` and `accessibility`
 describe the kind of work; `unplanned` means captured but not scheduled. Labels
 beginning `agent-ready`, `in-progress`, `pending`, `review`, `blocked`, `done`,
@@ -50,12 +50,12 @@ Do not read the whole tree. Start with the navigation that already exists:
 
 ## The contribution loop
 
-1. Fork `mcgloneb/ai-chat` on GitHub and clone your fork.
+1. Fork `chittr/chittr` on GitHub and clone your fork.
 2. Branch from `main`. Any descriptive branch name is fine.
 3. Make the change and add or update tests at the boundary the change touches. The
    maintenance guides name the focused test file for each area.
 4. Run checks that cover the changed behavior and report the results. The full Quality suite is optional for this preview.
-5. Push to your fork and open a pull request against `mcgloneb/ai-chat` `main`.
+5. Push to your fork and open a pull request against `chittr/chittr` `main`.
 6. Fill in the pull request template: what changed, why, and the check output you got.
 7. Bill reviews. Expect review comments rather than silent edits to your branch.
 
@@ -138,7 +138,7 @@ provider-support wording that is not backed by an observed run.
 
 | What you have                         | Where it goes                                                                    |
 | ------------------------------------- | -------------------------------------------------------------------------------- |
-| A bug in the software                 | A public [issue](https://github.com/mcgloneb/ai-chat/issues), using the bug form |
+| A bug in the software                 | A public [issue](https://github.com/chittr/chittr/issues), using the bug form |
 | A security vulnerability              | Privately — see [SECURITY.md](SECURITY.md). Never a public issue                 |
 | A question or help request            | [SUPPORT.md](SUPPORT.md)                                                         |
 | Behaviour by a person in this project | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)                                         |
