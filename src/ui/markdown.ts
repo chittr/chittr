@@ -24,6 +24,9 @@ const strong = '\x1b[1m',
 const displayText = (text: string) => cleanText(text).replace(/[\x80-\x9f]/g, '');
 /** List alignment spaces are display padding; retain marker separator spaces. */
 function prefixPadding(prefix: string): CopyRow['padding'] {
+  // An item's initial marker carries its ancestor indentation as content.
+  // Marker-less prefixes only align later logical lines under that item.
+  if (/•|\d+\./.test(prefix)) return [];
   return [...prefix.matchAll(/ +/g)].flatMap((match) => {
     const start = match.index + (match.index ? 1 : 0);
     const end = match.index + match[0].length;
@@ -265,6 +268,7 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
   ): void => {
     let previous: Nodes | undefined;
     for (const node of nodes) {
+      if (node.type === 'definition' && references.has(node.identifier)) continue;
       const start = node.position?.start.line ?? 1;
       const block = parentBlock ?? start;
       if (previous && start > (previous.position?.end.line ?? start) + 1)
@@ -345,8 +349,7 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
           );
           break;
         case 'definition':
-          if (!references.has(node.identifier))
-            emit([{ text: raw(node), style: '', line: start }], block, first, prefix);
+          emit([{ text: raw(node), style: '', line: start }], block, first, prefix);
           break;
         default:
           emit([{ text: raw(node), style: '', line: start }], block, first, prefix);

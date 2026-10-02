@@ -159,7 +159,11 @@ it('retains empty list and quote markers, unreferenced definitions and fence met
   expect(plain('>')).toEqual(['> ']);
   expect(copy('[docs]: https://example.com')).toBe('[docs]: https://example.com');
   expect(copy('```ts title=app.ts\na\n```')).toBe('ts title=app.ts\na');
-  expect(copy('[ref][docs]\n\n[docs]: https://example.com')).toBe('ref (https://example.com)\n');
+  expect(copy('[ref][docs]\n\n[docs]: https://example.com')).toBe('ref (https://example.com)');
+  expect(copy('[docs]: https://example.com\n\n[ref][docs]')).toBe('ref (https://example.com)');
+  expect(copy('[ref][docs]\n\n[docs]: https://example.com\n\nnext')).toBe(
+    'ref (https://example.com)\n\nnext',
+  );
 });
 
 it.each([8, 78])(
@@ -167,10 +171,20 @@ it.each([8, 78])(
   (width) => {
     expect(copy('- item\n\n  ```\n  a\n    b\n  ```', width)).toBe('• item\n\na\n  b');
     expect(copy('- first\n  next\n  - nested\n    more', width)).toBe(
-      '• first\nnext\n• nested\nmore',
+      '• first\nnext\n  • nested\nmore',
     );
     expect(copy('> - item\n>\n>   ```\n>   a\n>     b\n>   ```', width)).toBe(
       '> • item\n> \n> a\n>   b',
     );
+  },
+);
+
+it.each([20, 78])(
+  'copies initial list markers with their nesting indentation at %s cells',
+  (width) => {
+    expect(copy('- a\n  - b\n    - c', width)).toBe('• a\n  • b\n    • c');
+    expect(copy('1. a\n   - b', width)).toBe('1. a\n   • b');
+    expect(copy('> - a\n>   - b', width)).toBe('> • a\n>   • b');
+    expect(copy('- [x] a\n  - [ ] b', width)).toBe('• [x] a\n      • [ ] b');
   },
 );
