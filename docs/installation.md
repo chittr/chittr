@@ -128,6 +128,38 @@ Before upgrading, stop Chittr and make the complete backup above. Record the
 installed version with `chittr --version`. Install an identified release, then
 reopen from the same workspace and check messages, drafts and attachments.
 
+For the npm-global installation you are running:
+
+```sh
+chittr update
+```
+
+The command verifies that npm on PATH owns this installation, resolves `latest`,
+checks the target's Node requirement and installs that exact version as your user.
+It prints the versions, destination and backup reminder before installation, with
+no extra confirmation. Closing other rooms and making the complete backup are your
+responsibility. Equal or newer installed versions stay unchanged. On success,
+launch Chittr again. It does not update provider CLIs or read or write Chittr
+configuration or conversations.
+
+Source checkouts, linked packages, local/npx copies and other package managers are
+outside this command's scope. A mismatched npm prefix fails instead of installing
+a second copy. Use the installation method that owns that copy.
+
+An older release without `chittr update` needs one manual npm upgrade to gain it:
+
+```sh
+npm install -g @chittr/cli@latest
+```
+
+This manual command targets that npm context; it is not a repair for arbitrary
+source or other-manager installations. You can still install an identified version
+with `npm install -g @chittr/cli@VERSION`. npm output is shown during installation;
+Ctrl-C, SIGTERM or SIGHUP cancels it. A failed or cancelled replacement may have
+changed package files. Replacement is not atomic and does not restore the previous
+package automatically. See [reinstall](#reinstall-or-uninstall) and
+[backup recovery](#back-up-and-restore) before retrying.
+
 If a release fails, quit Chittr and preserve its data. Install a known working
 version, for example `npm install -g @chittr/cli@0.1.0` when 0.1.0 is the version
 you previously used successfully. With no known working release, keep your backup

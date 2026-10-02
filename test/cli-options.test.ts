@@ -1,6 +1,24 @@
 import { expect, it } from 'vitest';
 import { parseCliOptions } from '../src/cli-options.js';
 
+it('accepts standalone update', () => {
+  expect(parseCliOptions(['update']).command).toBe('update');
+});
+it.each([
+  ['extra'],
+  ['--new'],
+  ['--web'],
+  ['--session', 'id'],
+  ['--state-dir', '/tmp/state'],
+  ['--trusted-commands'],
+  ['--instructions-file', 'brief'],
+  ['--json'],
+])('rejects update arguments: %j', (...args) => {
+  expect(() => parseCliOptions(['update', ...args])).toThrow('accepts no additional arguments');
+  for (const flag of ['--help', '--version'])
+    expect(() => parseCliOptions(['update', ...args, flag])).not.toThrow();
+});
+
 it.each([[], ['--web'], ['--new'], ['--new', '--web']])(
   'accepts a launch brief for a new chat: %j',
   (...args) => {
