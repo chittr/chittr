@@ -8,7 +8,7 @@ import {
   rmSync,
   realpathSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -203,6 +203,24 @@ try {
   assert.match(deniedNetwork.stderr, /EPERM|EACCES/);
   console.log(
     'PASS actual broker socket connections and credential reads denied with commands, edits and network enabled; ordinary networking still works',
+  );
+  process.env.CHITTR_SECURITY_MARKER = 'launch-marker';
+  const environment = await networkCommands.call('run_command', {
+    command:
+      'printf "%s\\n" "HOME=${HOME-unset}" "MARKER=${CHITTR_SECURITY_MARKER-unset}" "TMPDIR=$TMPDIR" "PATH=$PATH"',
+  });
+  delete process.env.CHITTR_SECURITY_MARKER;
+  assert.equal(environment.exitCode, 0, environment.stderr);
+  assert.match(environment.stdout, /^HOME=unset$/m);
+  assert.match(environment.stdout, /^MARKER=unset$/m);
+  assert.ok(environment.stdout.split('\n').includes(`TMPDIR=${networkCommands.scratch}`));
+  assert.doesNotMatch(environment.stdout, /^PATH=.*\/opt\/homebrew\/bin/m);
+  const homeRead = await networkCommands.call('run_command', {
+    command: `ls ${shellQuote(homedir())}`,
+  });
+  assert.notEqual(homeRead.exitCode, 0);
+  console.log(
+    'PASS sandboxed commands start without HOME, the launch environment or Homebrew bin, and cannot list the home directory',
   );
 
   mcpClient = new Client({ name: 'trusted-command-probe', version: '1' });
