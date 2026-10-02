@@ -71,6 +71,10 @@ it('reports the package version and Chittr help from a different launch director
     expect(help.stderr).toBe('');
     expect(help.stdout.startsWith(`Chittr ${manifest.version}:`)).toBe(true);
     expect(help.stdout).toContain('Usage: chittr');
+    expect(help.stdout).toContain('--instructions-file PATH');
+    expect(help.stdout).toContain('not resume, --session or doctor');
+    expect(help.stdout).toContain('/reload updates YAML and keeps the saved brief');
+    expect(help.stdout).toContain('/new has no\nbrief');
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

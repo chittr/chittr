@@ -103,6 +103,7 @@ export class Room extends EventEmitter {
   private connecting = new Set<string>();
   private connections = new Map<string, Promise<void>>();
   private scheduled = false;
+  private startupSaved = false;
   private closed = false;
   private closing?: Promise<void>;
   private stops = new Set<Promise<void>>();
@@ -229,6 +230,7 @@ export class Room extends EventEmitter {
     // Commit the initial brief before any provider can receive its contents.
     this.changed();
     if (this.fatal || this.closed) return;
+    this.startupSaved = true;
     await Promise.all(
       Object.values(this.config.agents).map((agent) => {
         let state = this.session.agents[agent.id];
@@ -257,7 +259,13 @@ export class Room extends EventEmitter {
     this.schedule();
   }
   private connect(id: string, hold?: boolean): Promise<void> {
-    if (this.closed || this.fatal) return Promise.resolve();
+    if (this.closed) return Promise.resolve();
+    // A controller can reload before start(); that path needs the same first-save gate.
+    if (!this.startupSaved) {
+      this.changed();
+      if (this.fatal || this.closed) return Promise.resolve();
+      this.startupSaved = true;
+    }
     const existing = this.connections.get(id);
     if (existing) return existing;
     const pending = this.connectAgent(id, hold).finally(() => {
@@ -313,10 +321,6 @@ export class Room extends EventEmitter {
       return;
     }
     this.changed();
-    if (this.fatal) {
-      this.connecting.delete(id);
-      return;
-    }
     let adapter: AgentAdapter | undefined;
     try {
       adapter = this.factory(

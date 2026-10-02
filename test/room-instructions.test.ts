@@ -188,6 +188,10 @@ it('saves the brief before any adapter is constructed, and a failed save prevent
       expect(room.fatal).toContain('disk full');
       expect(room.session.paused).toBe(true);
       expect(() => room.send('Work')).toThrow('disk full');
+      const next = config();
+      next.instructions = 'Changed guidance';
+      await room.reload(next);
+      expect(peers.calls).toHaveLength(0);
     } else {
       expect(peers.calls).toHaveLength(2);
       for (const call of peers.calls) {
@@ -204,6 +208,41 @@ it('saves the brief before any adapter is constructed, and a failed save prevent
   }
 });
 
+it('preserves connection behavior and the dispatch hold after a later save failure', async () => {
+  const base = config();
+  const peers = factory();
+  let fail = false;
+  const room = new Room(
+    base,
+    {
+      save() {
+        if (fail) throw new Error('disk full');
+      },
+    },
+    undefined,
+    peers.create,
+  );
+  cleanup.push(() => room.close());
+  room.session.launchBrief = { text: 'Already saved brief', source: '/brief.md' };
+  await room.start();
+  fail = true;
+  for (const shared of ['New guidance', 'Reload while fatal']) {
+    const next = structuredClone(base);
+    next.instructions = shared;
+    await room.reload(next);
+    expect(room.fatal).toContain('disk full');
+    expect(room.session.paused).toBe(true);
+    for (const call of peers.calls.slice(-2)) {
+      expect(call.prompt).toContain(shared);
+      expect(call.peer.starts).toEqual([undefined]);
+      expect(room.session.agents[call.agent.id]!.connection).toBe('ready');
+      expect(call.peer.inputs).toEqual([]);
+    }
+    expect(() => room.send('Must remain held')).toThrow('disk full');
+  }
+  expect(peers.calls).toHaveLength(6);
+});
+
 it('resumes with saved guidance, resets changed shared identities, and isolates agent-only reloads', async () => {
   const base = config();
   const peers = factory();
@@ -211,6 +250,9 @@ it('resumes with saved guidance, resets changed shared identities, and isolates 
   cleanup.push(() => room.close());
   room.session.launchBrief = { text: 'Frozen brief', source: '/gone.md' };
   await room.start();
+  room.send('Original public objective');
+  await idle(room);
+  const publicHistory = structuredClone(room.session.messages);
   const initial = structuredClone(room.session);
   await room.reload(structuredClone(base));
   expect(peers.calls).toHaveLength(2);
@@ -223,6 +265,18 @@ it('resumes with saved guidance, resets changed shared identities, and isolates 
     expect(call.prompt).toContain('New shared guidance');
     expect(call.prompt).toContain('Frozen brief');
   }
+  expect(room.session.messages).toEqual(publicHistory);
+  room.send('Follow-up after reset');
+  await idle(room);
+  for (const call of peers.calls.slice(2)) {
+    expect(call.peer.inputs.at(-1)!.context.map((message) => message.text)).toEqual([
+      'Original public objective',
+    ]);
+    expect(call.peer.inputs.at(-1)!.messages.map((message) => message.text)).toEqual([
+      'Follow-up after reset',
+    ]);
+  }
+  expect(room.session.messages.slice(0, publicHistory.length)).toEqual(publicHistory);
   const one = structuredClone(next);
   one.agents.a!.instructions = 'Different role';
   one.agents.a!.fingerprint = 'different-role';
@@ -257,14 +311,18 @@ it('resumes with saved guidance, resets changed shared identities, and isolates 
   }
 });
 
-it.each([undefined, ''])(
-  'retains baseline native identity when effective shared content is empty: %s',
-  async (shared) => {
+it.each(
+  [undefined, ''].flatMap((shared) =>
+    [undefined, { text: '', source: '/empty.md' }].map((brief) => ({ shared, brief })),
+  ),
+)(
+  'retains baseline native identity when effective shared content is empty: %j',
+  async ({ shared, brief }) => {
     const conf = config();
     conf.instructions = shared;
     conf.provenance.instructions = '/explicit-clear.yaml';
     const session = newSession(conf);
-    session.launchBrief = { text: '', source: '/empty.md' };
+    if (brief) session.launchBrief = brief;
     for (const agent of Object.values(conf.agents))
       session.agents[agent.id] = {
         id: agent.id,
