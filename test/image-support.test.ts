@@ -172,8 +172,6 @@ const sandboxed = {
 // #69: the same all-permissions, skills-on room under effective command mode
 // `trusted`. The tuple has no trust-source field, so the source cannot matter.
 const trustedCommands = { ...sandboxed, commandMode: 'trusted' as const };
-const accepted =
-  'room configuration is outside the tested restricted, sandboxed-command and trusted-command configurations';
 const closed = { initial: { available: false }, retrieval: { available: false } };
 
 it('keeps Grok eligible across CLI versions when the same runtime contract is observed', () => {
@@ -228,9 +226,6 @@ it('rejects both Grok paths when any required observation is missing, unknown or
       { ...room, nativeInventoryVerified: undefined },
       { ...room, observedModel: 'unavailable' },
       { ...room, observedModel: '' },
-      { ...room, commandMode: undefined },
-      { ...room, permissions: {} as typeof room.permissions },
-      { ...room, skillsEnabled: undefined as unknown as boolean },
       // The identity is required evidence; an unreadable one is not observed.
       { ...room, cliVersion: '' },
       { ...room, cliVersion: 'grok 1.0.34' },
@@ -326,13 +321,9 @@ it('keeps Grok eligible for explicit and uncatalogued model identities on every 
       { requestedModel: 'grok-4.6', observedModel: 'grok-4-fast' },
     ])
       expect(grokImageSupport({ ...room, ...models }), JSON.stringify(models)).toEqual(open);
-  expect(
-    grokImageSupport({ ...modern, requestedModel: 'grok-3', skillsEnabled: true }).initial,
-  ).toEqual({
-    available: false,
-    status: 'unsupported',
-    reason: `Grok's verified initial-image tuple does not match: ${accepted}: edits=false, commands=false, network=false, skills=true, command mode=off; live CLI ${liveBuild}; observed model grok-4.6`,
-  });
+  expect(grokImageSupport({ ...modern, requestedModel: 'grok-3', skillsEnabled: true })).toEqual(
+    open,
+  );
   const unrecognized = grokImageSupport({
     ...modern,
     observedModel: '/private/model?credential=secret',
@@ -344,47 +335,32 @@ it('keeps Grok eligible for explicit and uncatalogued model identities on every 
   expect(JSON.stringify(unrecognized)).not.toContain('credential');
 });
 
-it('keeps mixed Grok room configurations unavailable and lists the failed effective fields', () => {
-  for (const invalid of [
-    { ...modern, skillsEnabled: true },
-    { ...modern, commandMode: 'sandboxed' as const },
-    { ...modern, commandMode: 'trusted' as const },
-    { ...sandboxed, skillsEnabled: false },
-    { ...sandboxed, permissions: { edits: true, commands: false, network: true } },
-    { ...sandboxed, commandMode: 'off' as const },
-    { ...trustedCommands, skillsEnabled: false },
-    { ...trustedCommands, permissions: { edits: true, commands: true, network: false } },
-    { ...trustedCommands, permissions: { edits: false, commands: false, network: false } },
-  ])
-    expect(grokImageSupport(invalid)).toMatchObject({
-      initial: { available: false, status: 'unsupported' },
-      retrieval: { available: false, status: 'unsupported' },
-    });
-  expect(grokImageSupport({ ...sandboxed, commandMode: undefined }).initial).toEqual({
-    available: false,
-    status: 'not_observed',
-    reason: `Grok initial images not observed: effective room policy has not been observed; live CLI ${liveBuild}; observed model grok-4.6`,
-  });
-  expect(grokImageSupport({ ...modern, skillsEnabled: true }).initial).toEqual({
-    available: false,
-    status: 'unsupported',
-    reason: `Grok's verified initial-image tuple does not match: ${accepted}: edits=false, commands=false, network=false, skills=true, command mode=off; live CLI ${liveBuild}; observed model grok-4.6`,
-  });
-  expect(grokImageSupport({ ...trustedCommands, skillsEnabled: false })).toEqual({
+// Room permissions, skills and command mode do not change image delivery, so a
+// current build is eligible in every room configuration, including the defaults.
+it('keeps Grok eligible in every room configuration and lists only failed observations', () => {
+  const open = {
     provider: 'grok',
-    initial: {
-      available: false,
-      status: 'unsupported',
-      reason: `Grok's verified initial-image tuple does not match: ${accepted}: edits=true, commands=true, network=true, skills=false, command mode=trusted; live CLI ${liveBuild}; observed model grok-4.6`,
-    },
-    retrieval: {
-      available: false,
-      status: 'unsupported',
-      reason: `Grok's verified retrieval tuple does not match: ${accepted}: edits=true, commands=true, network=true, skills=false, command mode=trusted; live CLI ${liveBuild}; observed model grok-4.6`,
-    },
-  });
+    initial: { available: true, status: 'available' },
+    retrieval: { available: true, status: 'available' },
+  };
+  for (const edits of [false, true])
+    for (const commands of [false, true])
+      for (const network of [false, true])
+        for (const skillsEnabled of [false, true])
+          for (const commandMode of ['off', 'sandboxed', 'trusted', undefined] as const) {
+            const room = { permissions: { edits, commands, network }, skillsEnabled, commandMode };
+            expect(grokImageSupport({ ...modern, ...room }), JSON.stringify(room)).toEqual(open);
+          }
+  // The policy is evidence on a current build: an unreadable one decides nothing.
+  for (const room of [
+    { commandMode: undefined },
+    { permissions: {} as typeof modern.permissions },
+    { skillsEnabled: undefined as unknown as boolean },
+  ])
+    expect(grokImageSupport({ ...modern, ...room })).toEqual(open);
   // Every failed condition is listed. The live identity is a bounded trailing
-  // diagnostic: a version difference is never itself a mismatch.
+  // diagnostic: a version difference is never itself a mismatch, and the room
+  // configuration is never named.
   const several = grokImageSupport({
     ...trustedCommands,
     cliVersion: 'grok 1.0.31 (unknown) [stable]',
@@ -394,22 +370,21 @@ it('keeps mixed Grok room configurations unavailable and lists the failed effect
   expect(several).toEqual({
     available: false,
     status: 'unsupported',
-    reason: `Grok's verified initial-image tuple does not match: the observed native tool inventory failed policy verification; ${accepted}: edits=true, commands=false, network=true, skills=true, command mode=trusted; live CLI grok 1.0.31 (unknown) [stable]; observed model grok-4.6`,
+    reason:
+      "Grok's verified initial-image tuple does not match: the observed native tool inventory failed policy verification; live CLI grok 1.0.31 (unknown) [stable]; observed model grok-4.6",
   });
   expect(several.available ? '' : several.reason).not.toMatch(
-    /CLI version is|no accepted image build/,
+    /CLI version is|no accepted image build|room configuration/,
   );
 });
 
 it('keeps each recorded Claude build as coverage while eligibility follows the live requirements', () => {
-  const tuple = (cliVersion: string, trusted: boolean) => ({
+  const tuple = (cliVersion: string) => ({
     cliVersion,
     requestedModel: 'opus',
     requestedEffort: 'xhigh',
     observedModel: 'claude-opus-5',
-    permissions: { edits: trusted, commands: trusted, network: trusted },
-    skillsEnabled: trusted,
-    commandMode: trusted ? ('trusted' as const) : ('off' as const),
+    connected: true,
     nativeInventoryVerified: true,
   });
   expect(testedClaudeImageBuilds.map((item) => item.cliVersion)).toEqual([
@@ -452,11 +427,10 @@ it('keeps each recorded Claude build as coverage while eligibility follows the l
     '2.1.277',
     '',
   ])
-    for (const trusted of [false, true])
-      expect(claudeImageSupport(tuple(cliVersion, trusted)), cliVersion).toMatchObject({
-        initial: { available: true },
-        retrieval: { available: true },
-      });
+    expect(claudeImageSupport(tuple(cliVersion)), cliVersion).toMatchObject({
+      initial: { available: true },
+      retrieval: { available: true },
+    });
 });
 
 it('preserves the exact 1.0.13 legacy restriction without any compaction pin', () => {
@@ -542,7 +516,7 @@ it('classifies missing observations separately from observed incompatibility', (
     grokImageSupport({
       ...grok,
       observedModel: 'unavailable',
-      commandMode: 'trusted',
+      nativeInventoryVerified: false,
     }).initial.status,
   ).toBe('unsupported');
 
@@ -552,22 +526,20 @@ it('classifies missing observations separately from observed incompatibility', (
     requestedEffort: 'xhigh',
     observedModel: 'claude-opus-5',
     observedEffort: 'xhigh',
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
+    connected: true,
     nativeInventoryVerified: true,
   };
   expect(claudeImageSupport(claude).initial.status).toBe('available');
+  expect(claudeImageSupport({ ...claude, connected: false }).initial.status).toBe('not_observed');
+  expect(claudeImageSupport({ ...claude, nativeInventoryVerified: false }).initial.status).toBe(
+    'unsupported',
+  );
+  // Before the first turn neither the inventory nor a turn model has been observed.
+  // #105: requested and observed model and effort are evidence only.
   for (const change of [
     { observedModel: undefined },
     { nativeInventoryVerified: undefined },
-    { permissions: {} as typeof claude.permissions },
-  ])
-    expect(claudeImageSupport({ ...claude, ...change }).initial.status).toBe('not_observed');
-  for (const change of [{ nativeInventoryVerified: false }, { skillsEnabled: true }])
-    expect(claudeImageSupport({ ...claude, ...change }).initial.status).toBe('unsupported');
-  // #105: requested and observed model and effort are evidence only.
-  for (const change of [
+    { observedModel: undefined, nativeInventoryVerified: undefined, observedEffort: undefined },
     { requestedEffort: 'high' },
     { observedModel: 'claude-fable-5-1' },
     { requestedModel: 'sonnet', observedModel: 'claude-sonnet-5' },
@@ -576,7 +548,8 @@ it('classifies missing observations separately from observed incompatibility', (
   for (const observedEffort of [undefined, 'high'])
     expect(claudeImageSupport({ ...claude, observedEffort }).initial.status).toBe('available');
   expect(
-    claudeImageSupport({ ...claude, observedModel: undefined, skillsEnabled: true }).initial.status,
+    claudeImageSupport({ ...claude, connected: false, nativeInventoryVerified: false }).initial
+      .status,
   ).toBe('unsupported');
 
   const codex = {
@@ -585,27 +558,18 @@ it('classifies missing observations separately from observed incompatibility', (
     requestedEffort: 'xhigh',
     observedModel: 'gpt-6-astra',
     observedEffort: 'xhigh',
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
     nativePolicyVerified: true,
-    sessionOrigin: 'fresh' as const,
   };
   expect(codexImageSupport(codex).initial.status).toBe('available');
   for (const change of [
     { observedModel: undefined },
     { observedEffort: undefined },
     { nativePolicyVerified: undefined },
-    { sessionOrigin: 'unknown' as const },
-    { permissions: {} as typeof codex.permissions },
   ])
     expect(codexImageSupport({ ...codex, ...change }).initial.status).toBe('not_observed');
-  for (const change of [
-    { nativePolicyVerified: false },
-    { sessionOrigin: 'resumed' as const },
-    { skillsEnabled: true },
-  ])
-    expect(codexImageSupport({ ...codex, ...change }).initial.status).toBe('unsupported');
+  expect(codexImageSupport({ ...codex, nativePolicyVerified: false }).initial.status).toBe(
+    'unsupported',
+  );
   for (const change of [
     { requestedModel: 'gpt-5.6-sol' },
     { observedModel: 'gpt-5.6-sol' },
@@ -617,7 +581,7 @@ it('classifies missing observations separately from observed incompatibility', (
     codexImageSupport({
       ...codex,
       observedEffort: undefined,
-      sessionOrigin: 'resumed',
+      nativePolicyVerified: false,
     }).initial.status,
   ).toBe('unsupported');
 });
@@ -628,9 +592,7 @@ const claudeTuple = (cliVersion: string) => ({
   requestedEffort: 'xhigh',
   observedModel: 'claude-opus-5',
   observedEffort: 'xhigh',
-  permissions: { edits: false, commands: false, network: false },
-  skillsEnabled: false,
-  commandMode: 'off' as const,
+  connected: true,
   nativeInventoryVerified: true,
 });
 const codexTuple = (cliVersion: string) => ({
@@ -639,11 +601,7 @@ const codexTuple = (cliVersion: string) => ({
   requestedEffort: 'xhigh',
   observedModel: 'gpt-6-astra',
   observedEffort: 'xhigh',
-  permissions: { edits: false, commands: false, network: false },
-  skillsEnabled: false,
-  commandMode: 'off' as const,
   nativePolicyVerified: true,
-  sessionOrigin: 'fresh' as const,
 });
 const reasons = (report: { initial: unknown; retrieval: unknown }) =>
   [report.initial, report.retrieval].map((path) => (path as { reason: string }).reason);
@@ -695,7 +653,7 @@ it('keeps Codex and Claude image paths open on unlisted CLI builds and reports t
   }
   const codexClosed = codexImageSupport({
     ...codexTuple('codex-cli 0.155.1'),
-    sessionOrigin: 'resumed',
+    nativePolicyVerified: false,
   });
   expect(codexClosed.initial).toMatchObject({ available: false, status: 'unsupported' });
   for (const reason of reasons(codexClosed)) expect(reason).toContain('live CLI codex-cli 0.155.1');
@@ -704,9 +662,9 @@ it('keeps Codex and Claude image paths open on unlisted CLI builds and reports t
   // identity renders the same way without closing anything by itself.
   const privateText = '/private/workspace/visual-answer?credential=secret';
   for (const report of [
-    claudeImageSupport({ ...claudeTuple(privateText), skillsEnabled: true }),
+    claudeImageSupport({ ...claudeTuple(privateText), nativeInventoryVerified: false }),
     codexImageSupport({ ...codexTuple(privateText), nativePolicyVerified: false }),
-    claudeImageSupport({ ...claudeTuple(''), observedModel: undefined }),
+    claudeImageSupport({ ...claudeTuple(''), connected: false }),
   ]) {
     expect(JSON.stringify(report)).not.toContain('credential=secret');
     for (const reason of reasons(report)) expect(reason).toContain('unknown or unavailable');
@@ -716,26 +674,13 @@ it('keeps Codex and Claude image paths open on unlisted CLI builds and reports t
 it('decides every Claude and Codex requirement on an unlisted CLI version', () => {
   const claude = claudeTuple('2.1.278 (Claude Code)');
   const codex = codexTuple('codex-cli 0.155.1');
-  const trusted = {
-    permissions: { edits: true, commands: true, network: true },
-    skillsEnabled: true,
-    commandMode: 'trusted' as const,
-  };
-  expect(claudeImageSupport({ ...claude, ...trusted }).initial.status).toBe('available');
-  expect(codexImageSupport({ ...codex, ...trusted }).initial.status).toBe('available');
+  expect(claudeImageSupport({ ...claude, connected: false }).initial.status).toBe('not_observed');
+  expect(claudeImageSupport({ ...claude, nativeInventoryVerified: false }).initial.status).toBe(
+    'unsupported',
+  );
   for (const change of [
     { observedModel: undefined },
     { nativeInventoryVerified: undefined },
-    { permissions: {} as typeof claude.permissions },
-  ])
-    expect(claudeImageSupport({ ...claude, ...change }).initial.status).toBe('not_observed');
-  for (const change of [
-    { nativeInventoryVerified: false },
-    { skillsEnabled: true },
-    { ...trusted, commandMode: 'sandboxed' as const },
-  ])
-    expect(claudeImageSupport({ ...claude, ...change }).initial.status).toBe('unsupported');
-  for (const change of [
     { requestedModel: 'claude-opus-5' },
     { requestedEffort: 'high' },
     { observedModel: 'claude-fable-5-1' },
@@ -746,24 +691,19 @@ it('decides every Claude and Codex requirement on an unlisted CLI version', () =
     expect(claudeImageSupport({ ...claude, observedEffort }).initial.status).toBe('available');
   // Failure precedence is unchanged: an observed failure outranks a missing one.
   expect(
-    claudeImageSupport({ ...claude, observedModel: undefined, skillsEnabled: true }).initial.status,
+    claudeImageSupport({ ...claude, connected: false, nativeInventoryVerified: false }).initial
+      .status,
   ).toBe('unsupported');
 
   for (const change of [
     { observedModel: undefined },
     { observedEffort: undefined },
     { nativePolicyVerified: undefined },
-    { sessionOrigin: 'unknown' as const },
-    { permissions: {} as typeof codex.permissions },
   ])
     expect(codexImageSupport({ ...codex, ...change }).initial.status).toBe('not_observed');
-  for (const change of [
-    { nativePolicyVerified: false },
-    { sessionOrigin: 'resumed' as const },
-    { skillsEnabled: true },
-    { ...trusted, commandMode: 'sandboxed' as const },
-  ])
-    expect(codexImageSupport({ ...codex, ...change }).initial.status).toBe('unsupported');
+  expect(codexImageSupport({ ...codex, nativePolicyVerified: false }).initial.status).toBe(
+    'unsupported',
+  );
   for (const change of [
     { requestedModel: 'gpt-5.6-sol' },
     { requestedEffort: 'high' },
@@ -772,13 +712,13 @@ it('decides every Claude and Codex requirement on an unlisted CLI version', () =
   ])
     expect(codexImageSupport({ ...codex, ...change }).initial.status).toBe('available');
   expect(
-    codexImageSupport({ ...codex, observedEffort: undefined, sessionOrigin: 'resumed' }).initial
+    codexImageSupport({ ...codex, observedEffort: undefined, nativePolicyVerified: false }).initial
       .status,
   ).toBe('unsupported');
   // Both paths always agree on an unlisted identity.
   for (const report of [
-    claudeImageSupport({ ...claude, observedModel: undefined }),
-    codexImageSupport({ ...codex, sessionOrigin: 'unknown' }),
+    claudeImageSupport({ ...claude, connected: false }),
+    codexImageSupport({ ...codex, nativePolicyVerified: undefined }),
   ])
     expect(report.initial.status).toBe(report.retrieval.status);
 });
@@ -850,14 +790,14 @@ it('opens Codex, Claude and Grok image paths for identities outside the historic
       ...codexTuple('codex-cli 0.156.1'),
       requestedEffort: 'high',
       observedEffort: 'high',
-      sessionOrigin: 'resumed',
+      nativePolicyVerified: false,
     }).initial,
   ).toMatchObject({ available: false, status: 'unsupported' });
   expect(
     claudeImageSupport({
       ...claudeTuple('2.1.278 (Claude Code)'),
       requestedEffort: 'high',
-      observedModel: undefined,
+      connected: false,
     }).initial,
   ).toMatchObject({ available: false, status: 'not_observed' });
 });
@@ -867,10 +807,10 @@ it('renders observed model and effort as bounded diagnostics without comparing t
     ...codexTuple('codex-cli 0.156.1'),
     requestedEffort: 'high',
     observedEffort: 'high',
-    sessionOrigin: 'resumed',
+    nativePolicyVerified: false,
   });
   for (const reason of reasons(codex)) {
-    expect(reason).toContain('only verified fresh threads support images');
+    expect(reason).toContain('the observed native policy checks failed');
     expect(reason).toContain(
       'live CLI codex-cli 0.156.1; observed model gpt-6-astra at effort high',
     );
@@ -888,6 +828,7 @@ it('renders observed model and effort as bounded diagnostics without comparing t
   const missing = claudeImageSupport({
     ...claudeTuple('2.1.278 (Claude Code)'),
     observedModel: undefined,
+    nativeInventoryVerified: false,
   });
   for (const reason of reasons(missing)) expect(reason).not.toContain('observed model');
   const secret = '/private/model?credential=secret';

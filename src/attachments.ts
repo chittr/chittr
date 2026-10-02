@@ -16,19 +16,10 @@ import { basename, join } from 'node:path';
 import { z } from 'zod';
 import { inflateSync } from 'node:zlib';
 import type { AttachmentMetadata, Message } from './types.js';
+import { attachmentLimits, attachmentLimitText } from './attachment-limits.js';
+import { providerEventBytes } from './process.js';
 
-export const attachmentLimits = {
-  acceptedMediaTypes: ['image/png'] as const,
-  perImageBytes: 1024 * 1024,
-  aggregateBytes: 3 * 1024 * 1024,
-  imagesPerMessage: 4,
-  maximumDimension: 4096,
-  maximumPixels: 16 * 1024 * 1024,
-  nativeFrameCharacters: 8 * 1024 * 1024,
-  abandonedMilliseconds: 24 * 60 * 60 * 1000,
-  interruptedWriteMilliseconds: 60 * 60 * 1000,
-  maximumSessionAttachments: 4096,
-} as const;
+export { attachmentLimits, attachmentLimitText } from './attachment-limits.js';
 
 const sessionIdentity = z.string().uuid();
 const operationIdentity = z.string().uuid();
@@ -205,7 +196,7 @@ export function validateImage(
 ): { mediaType: AttachmentMetadata['mediaType']; width: number; height: number } {
   if (!bytes.length) throw new AttachmentError('attachment-invalid', 'Image content is empty');
   if (bytes.length > attachmentLimits.perImageBytes)
-    throw new AttachmentError('attachment-limit', 'Image exceeds the 1 MiB per-image limit');
+    throw new AttachmentError('attachment-limit', attachmentLimitText.perImage);
   if (bytes.length >= 24 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
     const width = bytes.readUInt32BE(16);
     const height = bytes.readUInt32BE(20);
@@ -240,12 +231,12 @@ export function validateImage(
 
 export function validateAttachmentSet(values: AttachmentMetadata[]): void {
   if (values.length > attachmentLimits.imagesPerMessage)
-    throw new AttachmentError('attachment-limit', 'A message can contain at most four images');
+    throw new AttachmentError('attachment-limit', attachmentLimitText.count);
   if (new Set(values.map((value) => value.id)).size !== values.length)
     throw new AttachmentError('attachment-invalid', 'Attachment IDs must be unique and ordered');
   for (const value of values) attachmentMetadataSchema.parse(value);
   if (values.reduce((sum, value) => sum + value.byteSize, 0) > attachmentLimits.aggregateBytes)
-    throw new AttachmentError('attachment-limit', 'Images exceed the 3 MiB aggregate limit');
+    throw new AttachmentError('attachment-limit', attachmentLimitText.aggregate);
 }
 
 export class AttachmentStore {
@@ -492,7 +483,7 @@ export function grokInitialContent(messages: Message[], access?: AttachmentAcces
       },
     ];
   });
-  if (JSON.stringify(content).length > attachmentLimits.nativeFrameCharacters - 256 * 1024)
+  if (Buffer.byteLength(JSON.stringify(content)) > providerEventBytes - 256 * 1024)
     throw new AttachmentError('attachment-limit', 'Images exceed the provider frame limit');
   return content;
 }

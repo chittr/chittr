@@ -14,6 +14,7 @@ import { ToolService, toolInputs, toolSpecs } from '../src/tools.js';
 import { AttachmentStore, FileAttachmentResolver, attachmentLimits } from '../src/attachments.js';
 import { AttachmentResult, codexToolResult, mcpToolResult } from '../src/attachment-result.js';
 import { turnPrompt } from '../src/protocol.js';
+import { providerEventBytes } from '../src/process.js';
 import {
   checkpointChunks,
   checkpointPrompt,
@@ -205,9 +206,7 @@ it('fails byte-free on unverified bridges, corrupt/missing content, resolver fai
     tinyPng().toString('base64'),
   );
   expect(() =>
-    mcpToolResult(
-      new AttachmentResult('x'.repeat(attachmentLimits.nativeFrameCharacters), resolved, () => {}),
-    ),
+    mcpToolResult(new AttachmentResult('x'.repeat(providerEventBytes), resolved, () => {})),
   ).toThrow('transport limit');
   for (const bytes of [Buffer.from('corrupt'), paddedPng(attachmentLimits.perImageBytes + 1)]) {
     tools.attachmentAccess!.resolve = () => ({ ...resolved, bytes });
@@ -406,9 +405,7 @@ it('authorizes retrieval from unlisted Claude and Codex builds without widening 
       requestedModel: 'opus',
       requestedEffort: 'xhigh',
       observedModel: 'claude-opus-5',
-      permissions: policy,
-      skillsEnabled: false,
-      commandMode: 'off',
+      connected: true,
       nativeInventoryVerified: true,
       ...patch,
     });
@@ -419,11 +416,7 @@ it('authorizes retrieval from unlisted Claude and Codex builds without widening 
       requestedEffort: 'xhigh',
       observedModel: 'gpt-6-astra',
       observedEffort: 'xhigh',
-      permissions: policy,
-      skillsEnabled: false,
-      commandMode: 'off',
       nativePolicyVerified: true,
-      sessionOrigin: 'fresh',
       ...patch,
     });
   // An available report on a build with no catalog entry reaches the mapping.
@@ -444,7 +437,7 @@ it('authorizes retrieval from unlisted Claude and Codex builds without widening 
     ['claude-mcp-image', codex()],
     ['future-native-image', claude()],
     ['claude-mcp-image', claude({ nativeInventoryVerified: false })],
-    ['codex-dynamic-image', codex({ sessionOrigin: 'resumed' })],
+    ['codex-dynamic-image', codex({ nativePolicyVerified: false })],
   ] as const) {
     tools.registerRetrievalBridge({ key, report });
     tools.beginTurn();
@@ -498,7 +491,19 @@ it.each(['codex', 'claude', 'antigravity'] as const)(
   },
 );
 
-it('returns a byte-free error from real MCP dispatch when the complete Claude envelope exceeds its replay bound', async () => {
+// The MCP SDK reads at most 10 MiB per inbound message, so the largest legal
+// request ID with the largest image is the worst complete response. Claude
+// replays MCP image results twice; that doubled response must fit the reader.
+it('fits the doubled Claude replay of a maximum image with a maximum legal request ID through real MCP dispatch', async () => {
+  const largest = paddedPng(attachmentLimits.perImageBytes);
+  const image = store.stage({
+    sessionId: session,
+    operationId: randomUUID(),
+    filename: 'largest.png',
+    mediaType: 'image/png',
+    bytes: largest,
+  });
+  tools.setHistory([message('m1', [image])]);
   tools.registerRetrievalBridge({
     key: 'claude-mcp-image',
     report: claudeImageSupport({
@@ -507,60 +512,51 @@ it('returns a byte-free error from real MCP dispatch when the complete Claude en
       requestedEffort: 'xhigh',
       observedModel: 'claude-opus-5',
       observedEffort: 'xhigh',
-      permissions: policy,
-      skillsEnabled: false,
-      commandMode: 'off',
+      connected: true,
       nativeInventoryVerified: true,
     }),
   });
   tools.beginTurn();
   const settings = await tools.mcpSettings('a');
   const client = new Client({ name: 'dispatch-limit-test', version: '1' });
+  // This client stands in for the provider, which reads more than the SDK default.
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [join(process.cwd(), 'dist/mcp.js'), JSON.stringify(settings)],
     stderr: 'pipe',
+    maxBufferSize: providerEventBytes,
   });
   try {
     await client.connect(transport);
     const send = transport.send.bind(transport);
     const receive = transport.onmessage!;
-    const oversizedId = 'x'.repeat(attachmentLimits.nativeFrameCharacters / 2);
+    // A legal JSON-RPC string ID just under the SDK's inbound message bound.
+    const largestId = 'x'.repeat(10 * 1024 * 1024 - 64 * 1024);
     let clientId: string | number | undefined;
     let responseBytes = 0;
-    // Exercise a legal JSON-RPC string ID on the public stdio boundary. The
-    // typed image itself fits; only the complete doubled response is too big.
     transport.send = async (request) => {
       if ('method' in request && request.method === 'tools/call' && 'id' in request) {
         clientId = request.id;
-        return send({ ...request, id: oversizedId });
+        return send({ ...request, id: largestId });
       }
       return send(request);
     };
     transport.onmessage = (response) => {
-      if ('id' in response && response.id === oversizedId) {
+      if ('id' in response && response.id === largestId) {
         responseBytes = Buffer.byteLength(JSON.stringify(response));
         receive({ ...response, id: clientId! });
       } else receive(response);
     };
     const result = await client.callTool(
-      { name: 'read_attachment', arguments: query() },
+      { name: 'read_attachment', arguments: { attachment_id: image.id } },
       undefined,
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
-    expect(result.isError).toBe(true);
-    expect(result.content).toEqual([
-      { type: 'text', text: expect.stringContaining('attachment-limit') },
-    ]);
-    expect(JSON.stringify(result)).not.toContain(tinyPng().toString('base64'));
-    expect(JSON.stringify(result).length).toBeLessThan(500);
-    expect(responseBytes).toBeGreaterThan(oversizedId.length);
-    expect(responseBytes).toBeLessThan(attachmentLimits.nativeFrameCharacters);
-    transport.send = send;
-    transport.onmessage = receive;
-    expect(
-      (await client.callTool({ name: 'read_attachment', arguments: query() })).content,
-    ).toMatchObject([{ type: 'text' }, { type: 'image' }]);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toMatchObject([{ type: 'text' }, { type: 'image' }]);
+    expect((result.content as any)[1].data).toBe(largest.toString('base64'));
+    expect(responseBytes).toBeGreaterThan(largestId.length + largest.length);
+    expect(2 * responseBytes + 256 * 1024).toBeLessThan(providerEventBytes);
   } finally {
     await client.close();
   }

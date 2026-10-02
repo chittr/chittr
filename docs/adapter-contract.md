@@ -95,14 +95,14 @@ cannot keep the old turn alive after its parent revokes it.
 
 Turn authority and capability reports have different lifetimes:
 
-| Transition                            | Turn/result authority                                                                                    | Capability report                                                                                                                                                                                        |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Direct `interrupt()`                  | Ends the tool turn; earlier `AttachmentResult` objects cannot release bytes.                             | Codex and Claude preserve observations and may remain available. Grok becomes unavailable when its process closes. Antigravity stays unsupported.                                                        |
-| Abort a running turn                  | Revokes the turn and settles the run with `Interrupted`.                                                 | Claude clears its observed image model and reports `not_observed` until another successful observed text turn. Codex retains observations; Grok/Antigravity close the process.                           |
-| `close()`                             | Closes the parent service and ends authority.                                                            | Both image paths unavailable for all providers. Codex/Grok report `not_observed`; Antigravity reports `unsupported`. Claude clears identity and observations and reports `unsupported` on this baseline. |
-| `setMaintenance(true)` / `maintain()` | Ends the task turn; task calls reject during maintenance.                                                | Not a promise of capability withdrawal. A capability report alone never authorizes a task call.                                                                                                          |
-| Replacement                           | Closes the old adapter; old results and readers stay unauthorized even once a new adapter starts a turn. | Replacement establishes its own observations and bridge registration.                                                                                                                                    |
-| Reconnect or policy-changing reload   | Old adapter/resources are closed; old turn authority does not transfer.                                  | Availability requires fresh start observations and registration, plus a successful observed turn for Claude. An unchanged idle reload need not reconnect an adapter.                                     |
+| Transition                            | Turn/result authority                                                                                    | Capability report                                                                                                                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Direct `interrupt()`                  | Ends the tool turn; earlier `AttachmentResult` objects cannot release bytes.                             | Codex and Claude preserve observations and may remain available. Grok becomes unavailable when its process closes. Antigravity stays unsupported.                                                |
+| Abort a running turn                  | Revokes the turn and settles the run with `Interrupted`.                                                 | Claude clears its observed turn model, which is evidence only, and its report is unchanged. Codex retains observations; Grok/Antigravity close the process.                                      |
+| `close()`                             | Closes the parent service and ends authority.                                                            | Both image paths unavailable for all providers. Codex/Grok/Claude report `not_observed`; Antigravity reports `unsupported`. Claude clears its identity and reports its process is not connected. |
+| `setMaintenance(true)` / `maintain()` | Ends the task turn; task calls reject during maintenance.                                                | Not a promise of capability withdrawal. A capability report alone never authorizes a task call.                                                                                                  |
+| Replacement                           | Closes the old adapter; old results and readers stay unauthorized even once a new adapter starts a turn. | Replacement establishes its own observations and bridge registration.                                                                                                                            |
+| Reconnect or policy-changing reload   | Old adapter/resources are closed; old turn authority does not transfer.                                  | Availability requires fresh start observations and registration; Claude registers its bridge as available when `start()` succeeds. An unchanged idle reload need not reconnect an adapter.       |
 
 #85/PR #86 changes Claude's post-close missing-evidence status to
 `not_observed`. The conformance assertion accepts both statuses to run on
@@ -214,8 +214,9 @@ decision under #37. This contract work does not fix them.
   value and the trimmed acknowledgement.
 - Grok/Antigravity interrupt closes the process; Codex/Claude interrupt does
   not. Post-interrupt runnability without `start()` is unspecified.
-- Aborting a running Claude turn invalidates image observations; direct
-  `interrupt()` does not.
+- Claude observes its native tool inventory in each turn's init event. A failing
+  inventory re-registers the retrieval bridge as unavailable mid-turn, which ends
+  that turn's attachment authority; a passing one leaves the turn untouched.
 - Claude ordinary frames correlate by session only. Maintenance results alone
   require user-message UUID correlation, and Room cannot detect stale native
   traffic attributed to the current attempt.

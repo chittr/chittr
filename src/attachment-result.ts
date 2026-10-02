@@ -1,12 +1,8 @@
 import { assertClaudeFrame } from './claude-images.js';
 import { assertCodexFrame } from './codex-images.js';
 import { createHash } from 'node:crypto';
-import {
-  AttachmentError,
-  attachmentLimits,
-  validateImage,
-  type ResolvedAttachment,
-} from './attachments.js';
+import { AttachmentError, validateImage, type ResolvedAttachment } from './attachments.js';
+import { providerEventBytes } from './process.js';
 
 export const retrievalUnavailable = {
   error: 'attachment-unavailable',
@@ -62,10 +58,7 @@ export class AttachmentResult {
   response(envelope: { jsonrpc: '2.0'; id: string | number; result?: unknown }) {
     const response = { ...envelope, result: this.mcp() };
     if (this.mapping === 'claude-mcp-image') assertClaudeFrame(response, 2);
-    else if (
-      Buffer.byteLength(JSON.stringify(response)) + 256 * 1024 >
-      attachmentLimits.nativeFrameCharacters
-    )
+    else if (Buffer.byteLength(JSON.stringify(response)) + 256 * 1024 > providerEventBytes)
       throw new AttachmentError(
         'attachment-limit',
         'Native image response exceeds the transport limit',
@@ -94,10 +87,7 @@ export class AttachmentResult {
       ],
     };
     // Include enclosing JSON-RPC/bridge headroom, using the foundation's bound.
-    if (
-      Buffer.byteLength(JSON.stringify(result)) >
-      attachmentLimits.nativeFrameCharacters - 256 * 1024
-    )
+    if (Buffer.byteLength(JSON.stringify(result)) > providerEventBytes - 256 * 1024)
       throw new AttachmentError(
         'attachment-limit',
         'Native image result exceeds the transport limit',

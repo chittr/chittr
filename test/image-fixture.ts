@@ -57,3 +57,60 @@ export function widePng(): Buffer {
     chunk('IEND'),
   ]);
 }
+
+/** A non-interlaced RGBA PNG whose pixels `pixel` fills row by row. */
+function rgbaPng(
+  width: number,
+  height: number,
+  pixel: (index: number) => [number, number, number, number],
+): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const stride = width * 4 + 1;
+  const pixels = Buffer.alloc(height * stride);
+  for (let row = 0, index = 0; row < height; row++)
+    for (let column = 0; column < width; column++, index++)
+      pixels.set(pixel(index), row * stride + 1 + column * 4);
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(pixels)),
+    chunk('IEND'),
+  ]);
+}
+
+/** One opaque colour: compresses to a few kilobytes at any size. */
+export const solidPng = (width: number, height: number) =>
+  rgbaPng(width, height, () => [40, 120, 200, 255]);
+
+/** Deterministic opaque noise: incompressible, so about 4 bytes per pixel. */
+export function noisePng(width: number, height: number, seed = 1): Buffer {
+  let state = seed >>> 0 || 1;
+  const next = () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return state >>> 0;
+  };
+  return rgbaPng(width, height, () => {
+    const value = next();
+    return [value & 255, (value >>> 8) & 255, (value >>> 16) & 255, 255];
+  });
+}
+
+/** A 1×1 PNG using Adam7 interlacing, which browsers decode and the host refuses. */
+export function interlacedPng(): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr.set([8, 6, 0, 0, 1], 8);
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    chunk('IHDR', ihdr),
+    // A 1×1 image has pixels only in the first Adam7 pass.
+    chunk('IDAT', deflateSync(Buffer.from([0, 200, 30, 30, 255]))),
+    chunk('IEND'),
+  ]);
+}

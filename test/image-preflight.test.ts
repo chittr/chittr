@@ -528,58 +528,78 @@ it('keeps the provider-failure path for a real adapter failure on an image batch
   expect(() => room.retry('m1', 'grok')).toThrow('Reconnect @grok before retrying');
 });
 
-it('requires the observed Claude turn identity and approved effective policy, whatever the model or effort', async () => {
-  const { claudeImageSupport } = await import('../src/image-support.js');
+// Room permissions, skills and command mode do not change image delivery: the
+// adapters' image tuples carry no room policy, so every room configuration,
+// including the defaults (skills on, everything else off), is eligible.
+it('opens Claude and Codex images in every room configuration, whatever the model or effort', async () => {
+  const { claudeImageSupport, codexImageSupport } = await import('../src/image-support.js');
+  const { ClaudeAdapter } = await import('../src/adapters/claude.js');
+  const { CodexAdapter } = await import('../src/adapters/codex.js');
+  const open = (provider: string) => ({
+    provider,
+    initial: { available: true, status: 'available' },
+    retrieval: { available: true, status: 'available' },
+  });
+  for (const edits of [false, true])
+    for (const commands of [false, true])
+      for (const network of [false, true])
+        for (const skills of [false, true])
+          for (const mode of [undefined, 'trusted'] as const) {
+            // Trusted commands exist only with every permission on.
+            if (mode && !(edits && commands && network)) continue;
+            const cfg: RoomConfig = {
+              ...config(),
+              permissions: { edits, commands, network },
+              skills: { enabled: skills },
+              ...(mode
+                ? { commandAccess: { mode, source: '--trusted-commands', blockedBy: [] } }
+                : {}),
+            };
+            const room = JSON.stringify({ edits, commands, network, skills, mode });
+            const claude = new ClaudeAdapter(agent('claude', 'claude'), cfg).imageTuple;
+            expect(
+              claudeImageSupport({ ...claude, connected: true, nativeInventoryVerified: true }),
+              room,
+            ).toEqual(open('claude'));
+            // Before the first turn: nothing about the inventory or turn model is known yet.
+            expect(claudeImageSupport({ ...claude, connected: true }), room).toEqual(
+              open('claude'),
+            );
+            const codex = new CodexAdapter(agent('codex', 'codex'), cfg).imageEvidence;
+            expect(
+              codexImageSupport({
+                ...codex,
+                observedModel: 'gpt-6-astra',
+                observedEffort: 'high',
+                nativePolicyVerified: true,
+              }),
+              room,
+            ).toEqual(open('codex'));
+          }
   const tuple = {
     cliVersion: '2.1.268 (Claude Code)',
     requestedModel: 'opus',
     requestedEffort: 'xhigh',
     observedModel: 'claude-opus-5',
     observedEffort: 'xhigh',
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
+    connected: true,
     nativeInventoryVerified: true,
   };
-  expect(claudeImageSupport(tuple)).toMatchObject({
-    initial: { available: true },
-    retrieval: { available: true },
-  });
-  expect(
-    claudeImageSupport({
-      ...tuple,
-      permissions: { edits: true, commands: true, network: true },
-      skillsEnabled: true,
-      commandMode: 'trusted',
-    }),
-  ).toMatchObject({ initial: { available: true }, retrieval: { available: true } });
   // The live build is evidence: an unlisted or unreadable identity decides nothing.
   for (const cliVersion of ['2.1.278 (Claude Code)', '2.1.269 (Claude Code)', ''])
-    expect(claudeImageSupport({ ...tuple, cliVersion }), cliVersion).toMatchObject({
-      initial: { available: true },
-      retrieval: { available: true },
-    });
+    expect(claudeImageSupport({ ...tuple, cliVersion }), cliVersion).toEqual(open('claude'));
   // #105: so are the requested model and effort and the observed turn model.
   for (const patch of [
+    { observedModel: undefined },
     { observedModel: 'claude-fable-5-1' },
     { requestedModel: 'claude-opus-5' },
     { requestedEffort: 'high' },
     { requestedModel: 'sonnet', requestedEffort: 'max', observedModel: 'claude-sonnet-5' },
   ])
-    expect(claudeImageSupport({ ...tuple, ...patch }), JSON.stringify(patch)).toMatchObject({
-      initial: { available: true },
-      retrieval: { available: true },
-    });
-  for (const patch of [
-    { observedModel: undefined },
-    { nativeInventoryVerified: false },
-    { skillsEnabled: true },
-    {
-      permissions: { edits: true, commands: true, network: true },
-      skillsEnabled: true,
-      commandMode: 'sandboxed' as const,
-    },
-  ]) {
+    expect(claudeImageSupport({ ...tuple, ...patch }), JSON.stringify(patch)).toEqual(
+      open('claude'),
+    );
+  for (const patch of [{ connected: false }, { nativeInventoryVerified: false }]) {
     const support = claudeImageSupport({ ...tuple, ...patch });
     expect(support.initial.available).toBe(false);
     expect(support.retrieval.available).toBe(false);
@@ -594,9 +614,7 @@ it('treats unlisted Codex and Claude builds as available through room dispatch a
     requestedModel: 'opus',
     requestedEffort: 'xhigh',
     observedModel: 'claude-opus-5' as string | undefined,
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
+    connected: true,
     nativeInventoryVerified: true as boolean | undefined,
   };
   const codexTuple = {
@@ -605,11 +623,7 @@ it('treats unlisted Codex and Claude builds as available through room dispatch a
     requestedEffort: 'xhigh',
     observedModel: 'gpt-6-astra' as string | undefined,
     observedEffort: 'xhigh' as string | undefined,
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
     nativePolicyVerified: true as boolean | undefined,
-    sessionOrigin: 'fresh' as 'fresh' | 'resumed' | 'unknown',
   };
   const assets = join(root, 'assets');
   mkdirSync(assets);
@@ -667,7 +681,7 @@ it('treats unlisted Codex and Claude builds as available through room dispatch a
     // A real unmet requirement still fails the delivery before dispatch, and its
     // reason names the requirement and the live identity rather than a catalog.
     claudeTuple.nativeInventoryVerified = false;
-    codexTuple.sessionOrigin = 'resumed';
+    codexTuple.nativePolicyVerified = false;
     const before = { claude: made.claude!.inputs.length, codex: made.codex!.inputs.length };
     const refused = sendImage(room, '@claude @codex and this one');
     await tick();
@@ -679,7 +693,7 @@ it('treats unlisted Codex and Claude builds as available through room dispatch a
       expect(rationale, id).toContain(
         id === 'claude'
           ? 'the observed native tool inventory failed policy verification'
-          : 'only verified fresh threads support images',
+          : 'the observed native policy checks failed',
       );
       expect(rationale, id).toContain(
         id === 'claude' ? 'live CLI 2.1.278 (Claude Code)' : 'live CLI codex-cli 0.155.1',

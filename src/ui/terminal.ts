@@ -779,8 +779,12 @@ export class TerminalUI {
       invalidRoom: Boolean(snapshot.fatal),
     });
     if (imageWarning)
-      for (const [i, text] of wrapped(formatImageDraftWarning(imageWarning), width).entries())
-        this.cachedLines.push({ key: `image-warning:${i}`, text: `${amber}${text}${reset}` });
+      for (const [line, warning] of formatImageDraftWarning(imageWarning).entries())
+        for (const [i, text] of wrapped(warning, width).entries())
+          this.cachedLines.push({
+            key: `image-warning:${line}:${i}`,
+            text: `${amber}${text}${reset}`,
+          });
     if (this.feedback)
       for (const [i, text] of wrapped(this.feedback, width).entries())
         this.cachedLines.push({ key: `feedback:${i}`, text });
@@ -788,7 +792,7 @@ export class TerminalUI {
       this.cachedLines.push({
         key: 'action-help',
         text: fit(
-          'Attachment actions · /help · --list · --remove <id> · --clipboard · Esc cancel',
+          'Attachment actions · /help · --list · --remove <id> · --clipboard · --status · Esc cancel',
           width,
         ),
       });

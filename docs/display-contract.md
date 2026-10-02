@@ -96,17 +96,17 @@ configured agent absent from session state gets the defaults `connecting`,
 `available`, unpaused, unstopped, empty draft, and the status pair `Connecting` /
 `Starting the provider session`.
 
-| Field                                       | Meaning                                                                                                            |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `provider`, `enabled`                       | From config; `provider` is absent only for session-only agents                                                     |
-| `model`, `effort`                           | Config values through `providerDefault`                                                                            |
-| `connection`, `activity`, `detail`, `error` | Raw state: transport state, what the agent is doing, its current tool or note, and its last failure                |
-| `paused`, `stopped`, `recoveryRequired`     | Holds on this agent, below; `paused` and `stopped` are resolved booleans, `recoveryRequired` is optional           |
-| `contextUsage`, `maintenance`               | Raw state, borrowed                                                                                                |
-| `draft`, `active`                           | Streaming text (`''` when none) and `{ startedAt, messageIds }` of the running turn; no provider-private state     |
-| `pending`                                   | `{ queued, capped, unresolved }` delivery counts for this recipient, below                                         |
-| `initialImageSupport`                       | The engine's current report for configured enabled agents only, with its availability, status and reason preserved |
-| `status`, `statusDetail`                    | `participantStatus` applied to the projected fields, once per agent                                                |
+| Field                                       | Meaning                                                                                                                                                                                                              |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`, `enabled`                       | From config; `provider` is absent only for session-only agents                                                                                                                                                       |
+| `model`, `effort`                           | Config values through `providerDefault`                                                                                                                                                                              |
+| `connection`, `activity`, `detail`, `error` | Raw state: transport state, what the agent is doing, its current tool or note, and its last failure                                                                                                                  |
+| `paused`, `stopped`, `recoveryRequired`     | Holds on this agent, below; `paused` and `stopped` are resolved booleans, `recoveryRequired` is optional                                                                                                             |
+| `contextUsage`, `maintenance`               | Raw state, borrowed                                                                                                                                                                                                  |
+| `draft`, `active`                           | Streaming text (`''` when none) and `{ startedAt, messageIds }` of the running turn; no provider-private state                                                                                                       |
+| `pending`                                   | `{ queued, capped, unresolved }` delivery counts for this recipient, below                                                                                                                                           |
+| `initialImageSupport`                       | The engine's current report for configured enabled agents only, with its availability, status and reason preserved; read by the staged-image warning and `/participants`, not rendered in the sidebar or agent cards |
+| `status`, `statusDetail`                    | `participantStatus` applied to the projected fields, once per agent                                                                                                                                                  |
 
 Holds. `paused` means replies to this agent are held: queued deliveries are not
 dispatched, while a turn already running finishes. `stopped` means its provider
@@ -230,4 +230,10 @@ projection per frame after its held-display early return, and uses the narrow
 reads in completion and vertical movement. The browser renders `timeline`,
 `pinnedMessages`, `unansweredQuestions` and agent `status` / `statusDetail`, and
 passes `questionSession(state)` to its question cards. `imageDraftWarning`
-receives the projected agents and messages and remains the warning authority.
+receives the projected agents and messages and remains the warning authority:
+only a staged image shows image status before send. Both interfaces render one
+`imageWarningLine` per affected recipient; the browser keeps each full reason
+behind a collapsed **Details** control, and the terminal points to
+`/attach --status`, which prints them through `formatImageRecipientStatus`.
+`/participants` lists every agent's report. The browser sidebar and agent cards
+show no image status.

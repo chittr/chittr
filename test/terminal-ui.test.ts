@@ -151,7 +151,7 @@ it('sends image-only from Enter and history recall never restages the attachment
   expect(controller.room.session.messages).toHaveLength(1);
 });
 
-it('renders grouped staged-image warnings immediately after staged attachments', async () => {
+it('renders one short staged-image line per affected recipient after staged attachments', async () => {
   controller.room.config.agents = {
     claude: {
       id: 'claude',
@@ -182,21 +182,68 @@ it('renders grouped staged-image warnings immediately after staged attachments',
         },
   );
   feed('@claude @antigravity compare');
-  expect(frame()).not.toContain('Image status warning');
+  expect(frame()).not.toContain("can't receive images");
   feed('\x0ffixture.png\r');
   await vi.waitFor(() => expect(controller.room.session.composerAttachments).toHaveLength(1));
-  await vi.waitFor(() => expect(frame()).toContain('Image status warning'));
+  await vi.waitFor(() => expect(frame()).toContain("@claude can't receive images yet"));
   const rendered = frame();
-  expect(rendered).toContain('Not observed: @claude: Claude model has not been observed');
-  expect(rendered).toContain('Unsupported:');
-  expect(rendered).toContain('@antigravity: Antigravity images are unsupported');
-  expect(rendered.indexOf('Staged att-')).toBeLessThan(rendered.indexOf('Image status warning'));
+  expect(rendered).toContain("@antigravity can't receive images");
+  expect(rendered).toContain('Ctrl+O, /attach --status for details.');
+  // The full reasons stay behind /attach --status.
+  expect(rendered).not.toContain('Claude model has not been observed');
+  expect(rendered).not.toContain('Antigravity images are unsupported');
+  expect(rendered.indexOf('Staged att-')).toBeLessThan(
+    rendered.indexOf("@claude can't receive images yet"),
+  );
   vi.mocked(controller.room.initialImageSupport).mockReturnValue({
     available: true,
     status: 'available',
   });
   feed(' ');
-  expect(frame()).not.toContain('Image status warning');
+  expect(frame()).not.toContain("can't receive images");
+});
+
+it('prints each recipient image reason with /attach --status, keeping the caption and staged images, and sends nothing', async () => {
+  controller.room.config.agents = {
+    claude: {
+      id: 'claude',
+      provider: 'claude',
+      enabled: true,
+      instructions: '',
+      fingerprint: 'claude',
+    },
+    antigravity: {
+      id: 'antigravity',
+      provider: 'antigravity',
+      enabled: true,
+      instructions: '',
+      fingerprint: 'antigravity',
+    },
+  };
+  vi.spyOn(controller.room, 'initialImageSupport').mockImplementation((id) =>
+    id === 'claude'
+      ? { available: true, status: 'available' }
+      : {
+          available: false,
+          status: 'unsupported',
+          reason: 'Antigravity images are unsupported',
+        },
+  );
+  feed('@claude @antigravity compare these');
+  feed('\x0ffixture.png\r');
+  await vi.waitFor(() => expect(controller.room.session.composerAttachments).toHaveLength(1));
+  await vi.waitFor(() => expect(frame()).toContain("@antigravity can't receive images"));
+  const staged = controller.room.session.composerAttachments!.map((a) => a.id);
+  const messages = controller.room.session.messages.length;
+  feed('\x0f--status\r');
+  await vi.waitFor(() =>
+    expect(frame()).toContain('@antigravity: Antigravity images are unsupported'),
+  );
+  expect(frame()).toContain('@claude: can receive images');
+  expect(controller.room.session.messages).toHaveLength(messages);
+  expect(controller.room.session.composerAttachments!.map((a) => a.id)).toEqual(staged);
+  expect(controller.room.session.composerDraft).toBe('@claude @antigravity compare these');
+  expect(frame()).toContain('@claude @antigravity compare these');
 });
 
 it('keeps staged-image warning recipients tied to the composer while attachment input is open', async () => {

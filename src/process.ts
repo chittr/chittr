@@ -1,6 +1,57 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
+
+/** The largest provider stdout line the reader buffers, in bytes. Outbound image
+ * frames are budgeted against it because providers can echo them back on stdout.
+ */
+export const providerEventBytes = 64 * 1024 * 1024;
+
+/**
+ * Splits a byte stream into complete `\n`-terminated lines, dropping one trailing
+ * `\r`. A line is decoded only when complete, so a UTF-8 sequence split across
+ * chunks decodes intact. Bytes without a newline never accumulate past `limit`:
+ * the push that would pass it throws instead of buffering.
+ */
+export class JsonLineSplitter {
+  private pending: Buffer[] = [];
+  private pendingBytes = 0;
+  constructor(private limit = providerEventBytes) {}
+  get bufferedBytes(): number {
+    return this.pendingBytes;
+  }
+  /** Hands each complete line to `line` in order, then buffers the unterminated rest. */
+  push(chunk: Buffer, line: (text: string) => void): void {
+    let start = 0;
+    for (let end = chunk.indexOf(10); end >= 0; end = chunk.indexOf(10, start)) {
+      line(this.take(chunk.subarray(start, end)));
+      start = end + 1;
+    }
+    this.hold(chunk.subarray(start));
+  }
+  /** Hands over the final unterminated line at stream end, if any. */
+  end(line: (text: string) => void): void {
+    if (this.pendingBytes) line(this.take(Buffer.alloc(0)));
+  }
+  private hold(part: Buffer): void {
+    if (!part.length) return;
+    if (this.pendingBytes + part.length > this.limit) this.overflow();
+    this.pending.push(part);
+    this.pendingBytes += part.length;
+  }
+  private take(tail: Buffer): string {
+    if (this.pendingBytes + tail.length > this.limit) this.overflow();
+    let line = this.pending.length ? Buffer.concat([...this.pending, tail]) : tail;
+    this.pending = [];
+    this.pendingBytes = 0;
+    if (line.at(-1) === 13) line = line.subarray(0, -1);
+    return line.toString('utf8');
+  }
+  private overflow(): never {
+    this.pending = [];
+    this.pendingBytes = 0;
+    throw new Error('Oversized provider event');
+  }
+}
 
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -132,26 +183,20 @@ export class JsonLinesProcess extends EventEmitter {
       this.stderr = (this.stderr + data).slice(-8000);
     });
     this.child.stdin.on('error', () => {});
-    const lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
-    lines.on('line', (line) => {
-      if (line.length > 8 * 1024 * 1024) {
-        this.fail(new Error('Oversized provider event'));
-        return;
-      }
+    const splitter = new JsonLineSplitter();
+    let overflowed = false;
+    const read = (next: (line: (text: string) => void) => void) => {
+      if (overflowed) return;
       try {
-        const message = JSON.parse(line);
-        const pending = this.pending.get(message.id);
-        if (pending && !message.method) {
-          clearTimeout(pending.timer);
-          this.pending.delete(message.id);
-          message.error
-            ? pending.reject(new Error(message.error.message))
-            : pending.resolve(message.result);
-        } else this.emit('message', message);
-      } catch {
-        this.emit('notice', 'Ignored a malformed provider event');
+        next((line) => this.line(line));
+      } catch (error) {
+        // Later stdout is still drained, but never buffered or dispatched.
+        overflowed = true;
+        this.fail(error as Error);
       }
-    });
+    };
+    this.child.stdout.on('data', (chunk: Buffer) => read((line) => splitter.push(chunk, line)));
+    this.child.stdout.on('end', () => read((line) => splitter.end(line)));
     this.child.on('error', (error) => this.fail(error));
     this.child.on('close', (code) =>
       this.fail(
@@ -160,6 +205,21 @@ export class JsonLinesProcess extends EventEmitter {
         ),
       ),
     );
+  }
+  private line(line: string): void {
+    try {
+      const message = JSON.parse(line);
+      const pending = this.pending.get(message.id);
+      if (pending && !message.method) {
+        clearTimeout(pending.timer);
+        this.pending.delete(message.id);
+        message.error
+          ? pending.reject(new Error(message.error.message))
+          : pending.resolve(message.result);
+      } else this.emit('message', message);
+    } catch {
+      this.emit('notice', 'Ignored a malformed provider event');
+    }
   }
   send(message: unknown, validate?: (serialized: string) => void): void {
     if (this.closed) throw new Error('CLI disconnected');

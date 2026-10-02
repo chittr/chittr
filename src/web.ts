@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { RoomController } from './controller.js';
 import { complete } from './completion.js';
 import type { CommandResult, StageAttachmentResult, WebState } from './web-types.js';
-import { AttachmentError, attachmentLimits } from './attachments.js';
+import { AttachmentError, attachmentLimits, attachmentLimitText } from './attachments.js';
 
 const identity = z.string().uuid();
 const draftIdentity = z.object({
@@ -283,13 +283,13 @@ export class WebUI {
       const operationId = url.searchParams.get('operationId') ?? '';
       const declaredLength = Number(request.headers['content-length']);
       if (Number.isFinite(declaredLength) && declaredLength > attachmentLimits.perImageBytes)
-        throw new HttpError(413, 'Image exceeds the 1 MiB per-image limit');
+        throw new HttpError(413, attachmentLimitText.perImage);
       const chunks: Buffer[] = [];
       let length = 0;
       for await (const chunk of request) {
         length += chunk.length;
         if (length > attachmentLimits.perImageBytes)
-          throw new HttpError(413, 'Image exceeds the 1 MiB per-image limit');
+          throw new HttpError(413, attachmentLimitText.perImage);
         chunks.push(Buffer.from(chunk));
       }
       let attachment;

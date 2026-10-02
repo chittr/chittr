@@ -82,9 +82,9 @@ Models can misunderstand instructions or follow hostile text. The preview has
 not passed a complete security audit or the full Quality suite. Do not treat it
 as an isolation boundary for untrusted same-account programs.
 
-Codex image delivery remains restricted to a fresh thread that passes its native
-policy checks; resumed images remain unavailable. Claude checkpoint replacement
-and historical image retrieval after restart remain outside verified coverage.
+Codex image delivery requires a thread, fresh or resumed, that passes the native
+policy checks that admit it at startup. Claude checkpoint replacement and
+historical image retrieval after restart remain outside verified coverage.
 Provider changes can break startup or a capability even when login still works.
 
 Report suspected vulnerabilities through

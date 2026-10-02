@@ -663,19 +663,23 @@ export class Room extends EventEmitter {
         const batch: Message[] = [];
         let bytes = 0;
         let attachmentBytes = 0;
+        let attachmentCount = 0;
         for (const message of runnable) {
           const nextAttachmentBytes =
             message.attachments?.reduce((sum, attachment) => sum + attachment.byteSize, 0) ?? 0;
+          const nextAttachmentCount = message.attachments?.length ?? 0;
           if (
             batch.length >= 32 ||
             (batch.length && bytes + Buffer.byteLength(message.text) > 65536) ||
             (batch.length &&
-              attachmentBytes + nextAttachmentBytes > attachmentLimits.aggregateBytes)
+              (attachmentBytes + nextAttachmentBytes > attachmentLimits.aggregateBytes ||
+                attachmentCount + nextAttachmentCount > attachmentLimits.imagesPerMessage))
           )
             break;
           batch.push(message);
           bytes += Buffer.byteLength(message.text);
           attachmentBytes += nextAttachmentBytes;
+          attachmentCount += nextAttachmentCount;
         }
         if (batch.length) this.dispatch(id, batch);
       }

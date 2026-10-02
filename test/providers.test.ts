@@ -1126,11 +1126,12 @@ it('maps ordered required-message images for the observed Grok runtime, whatever
     access.settings,
   );
   const oversized = structuredClone(imageInput);
-  oversized.context = Array.from({ length: 128 }, (_, index) => ({
+  // 34 messages of 2 MiB pass the 64 MiB provider reader cap.
+  oversized.context = Array.from({ length: 34 }, (_, index) => ({
     ...structuredClone(input.messages[0]!),
     id: `m${index + 2}`,
     sequence: index + 2,
-    text: 'x'.repeat(65536),
+    text: 'x'.repeat(2 * 1024 * 1024),
     roots: [`m${index + 2}`],
     attachments: undefined,
   }));
@@ -1167,9 +1168,28 @@ it('maps ordered required-message images for the observed Grok runtime, whatever
     observedModel: 'grok-other',
   });
 
-  // Without room preflight the direct guard still rejects, as an invariant failure
-  // that repeats the shared tuple diagnostic rather than a second explanation.
+  // Room permissions, skills and command mode never close a current build: the
+  // default room (permissions off, skills on) is eligible.
   fixture.grokModel = 'grok-4.6';
+  const defaults = createAdapter(
+    {
+      id: 'reviewer',
+      provider: 'grok',
+      enabled: true,
+      instructions: '',
+      fingerprint: 'default-room',
+    },
+    { ...config, skills: { enabled: true } },
+    undefined,
+    access,
+  );
+  adapters.push(defaults);
+  await defaults.start();
+  expect(defaults.imageSupport!().initial).toEqual({ available: true, status: 'available' });
+  // Without room preflight the direct guard still rejects, as an invariant failure
+  // that repeats the shared tuple diagnostic rather than a second explanation. The
+  // legacy build keeps its restricted-room requirement.
+  fixture.version = legacyRestrictedGrokBuild;
   const unavailable = createAdapter(
     {
       id: 'reviewer',
@@ -1188,14 +1208,14 @@ it('maps ordered required-message images for the observed Grok runtime, whatever
   expect(unavailable.initialImageSupport!()).toEqual({
     available: false,
     status: 'unsupported',
-    reason: `Grok's verified initial-image tuple does not match: room configuration is outside the tested restricted, sandboxed-command and trusted-command configurations: edits=false, commands=false, network=false, skills=true, command mode=off; live CLI grok 1.0.14 (unverified) [stable]; observed model grok-4.6`,
+    reason: `Grok's verified initial-image tuple does not match: skills are enabled; the verified tuple requires skills disabled; observed model grok-4.6`,
   });
   fixture.lastGrokPrompt = undefined;
   const failure = unavailable.run(imageInput, () => {}, new AbortController().signal);
   await expect(failure).rejects.toThrow(
     'Invariant violation: Grok received initial images that room preflight should have rejected',
   );
-  await expect(failure).rejects.toThrow('room configuration is outside the tested');
+  await expect(failure).rejects.toThrow('skills are enabled');
   await expect(failure).rejects.not.toThrow('CLI version is');
   await expect(failure).rejects.not.toThrow('unavailable for this Grok CLI version');
   // No prompt, so no pixels, reached the provider.

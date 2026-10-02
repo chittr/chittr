@@ -1,14 +1,15 @@
 import { constants } from 'node:fs';
 import { open, realpath, stat, opendir } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { attachmentLimits } from '../attachments.js';
+import { attachmentLimits, attachmentLimitText } from '../attachments.js';
 import type { AttachmentMetadata } from '../types.js';
 
 export const attachmentHelp = [
   'Ctrl+O opens attachment actions; Enter runs an action, never sends. Esc cancels ingestion.',
   'Once a draft update is dispatched, Esc dismisses the input; its result is still shown.',
-  '/attach <path> · /attach --list · /attach --remove <full-id> · /attach --clipboard',
-  'Tab completes actions, paths and staged IDs. PNG only; 1 MiB each, four images, 3 MiB total.',
+  '/attach <path> · /attach --list · /attach --remove <full-id> · /attach --clipboard · /attach --status',
+  `Tab completes actions, paths and staged IDs. PNG only; ${attachmentLimitText.summary}.`,
+  '/attach --status shows why a recipient of the current draft cannot receive images.',
   'Use an absolute or launch-relative path. Spaces are literal; JSON quotes preserve exact names.',
   'Example: /attach "./images/photo one.png". Use /attach -- <path> for option-like names.',
   'No ~/ expansion or shell escaping. If image clipboard is unavailable, save a PNG and /attach its path.',
@@ -17,16 +18,19 @@ export type AttachmentAction =
   | { kind: 'path'; path: string }
   | { kind: 'list' }
   | { kind: 'clipboard' }
+  | { kind: 'status' }
   | { kind: 'help' }
   | { kind: 'remove'; id: string };
 
 export function parseAttachmentAction(line: string): AttachmentAction {
   if (line.trim() === '/help' || line.trim() === '/attach') return { kind: 'help' };
   const match = /^\/attach\s+([\s\S]*)$/.exec(line);
-  if (!match) throw new Error('Use /attach <path>, --list, --remove <id> or --clipboard.');
+  if (!match)
+    throw new Error('Use /attach <path>, --list, --remove <id>, --clipboard or --status.');
   let rest = match[1]!.trim();
   if (rest === '--list') return { kind: 'list' };
   if (rest === '--clipboard') return { kind: 'clipboard' };
+  if (rest === '--status') return { kind: 'status' };
   if (/^--remove(?:\s|$)/.test(rest)) {
     const id = rest.slice(8).trim();
     if (!/^att-[a-f0-9]{32}$/.test(id))
@@ -68,7 +72,7 @@ export async function readAttachmentPath(
     const before = await handle.stat({ bigint: true });
     if (!before.isFile()) throw new Error('Select a regular PNG file.');
     if (before.size > BigInt(attachmentLimits.perImageBytes))
-      throw new Error('Image exceeds the 1 MiB limit.');
+      throw new Error(`${attachmentLimitText.perImage}.`);
     const buffer = Buffer.alloc(attachmentLimits.perImageBytes + 1);
     let length = 0;
     while (length < buffer.length) {
@@ -82,7 +86,8 @@ export async function readAttachmentPath(
       if (!bytesRead) break;
       length += bytesRead;
     }
-    if (length > attachmentLimits.perImageBytes) throw new Error('Image exceeds the 1 MiB limit.');
+    if (length > attachmentLimits.perImageBytes)
+      throw new Error(`${attachmentLimitText.perImage}.`);
     const after = await handle.stat({ bigint: true });
     const current = await stat(selected, { bigint: true });
     if (
@@ -121,7 +126,12 @@ export async function completeAttachmentAction(
   if (!line.includes(' ')) return ['/attach ', '/help'].filter((item) => item.startsWith(line));
   if (line.startsWith('/attach --remove '))
     return attachments.map((a) => `/attach --remove ${a.id}`).filter((s) => s.startsWith(line));
-  const options = ['/attach --list', '/attach --remove ', '/attach --clipboard'];
+  const options = [
+    '/attach --list',
+    '/attach --remove ',
+    '/attach --clipboard',
+    '/attach --status',
+  ];
   if (line.startsWith('/attach -') && !line.startsWith('/attach -- '))
     return options.filter((s) => s.startsWith(line));
   if (!line.startsWith('/attach ')) return [];

@@ -12,6 +12,7 @@ import {
 import type {
   AgentAdapter,
   AgentConfig,
+  Permissions,
   RoomConfig,
   TurnInput,
   TurnResult,
@@ -87,8 +88,8 @@ export class CodexAdapter implements AgentAdapter {
     route: 'start' | 'resume' | 'resume-fallback';
   };
   private activeImageTurn = 0;
-  /** Policy keys that only images need: the fresh-thread projection (#63) and the route itself. */
-  private static readonly imageOnlyPolicy = [
+  /** Policy keys recorded as evidence only: the thread's environment projection and route. */
+  private static readonly evidenceOnlyPolicy = [
     'route',
     'environmentCount',
     'projectedRootCount',
@@ -102,7 +103,11 @@ export class CodexAdapter implements AgentAdapter {
     nativeCompaction: boolean;
     nativeMaintenancePolicyFailures: string[];
     skillBundleCount: number;
+    permissions: Permissions;
+    skillsEnabled: boolean;
+    commandMode: 'off' | 'sandboxed' | 'trusted';
     commandModeSource?: string;
+    sessionOrigin: 'fresh' | 'resumed' | 'unknown';
     policy?: CodexAdapter['imagePolicy'];
   } {
     return {
@@ -346,27 +351,25 @@ export class CodexAdapter implements AgentAdapter {
       route: sessionId ? (restored ? 'resume-fallback' : 'resume') : 'start',
     };
     if (this.agent.effort) await this.validateEffort(result.model);
-    this.nativeImagePolicyVerified = Object.entries(this.imagePolicy).every(
-      ([key, value]) =>
-        ['route', 'environmentCount', 'projectedRootCount'].includes(key) || value === true,
-    );
-    this.tools.registerRetrievalBridge({ key: codexImageBridge.key, report: this.imageSupport() });
-    // Attempt then validate. The native compaction route and the source-context
-    // handoff may be attempted on any CLI identity once the thread's observed
-    // policy passed every required check: the named restricted profile, never
-    // approvals with the user as reviewer, a read-only sandbox without network,
-    // the direct read-only workspace grant, the reported profile and network
-    // state, denied temporary roots, disabled native features, web search and
-    // MCP servers. The fresh-thread projection is image-only (#63) and a
-    // resumed thread keeps its maintenance routes. Neither flag claims the
-    // operation will succeed: compact() requires its correlated compaction
-    // item and turn completion, the handoff requires a valid maintenance
-    // result, and a failure retains the saved reference and requires explicit
-    // recovery. A missing or failed observation refuses startup below and
-    // names the observation.
+    // Attempt then validate. Images, the native compaction route and the
+    // source-context handoff may be attempted on any CLI identity once the
+    // thread's observed policy passed every required check: the named
+    // restricted profile, never approvals with the user as reviewer, a
+    // read-only sandbox without network, the direct read-only workspace grant,
+    // the reported profile and network state, denied temporary roots, disabled
+    // native features, web search and MCP servers. The thread's environment
+    // projection and route are evidence only, so a resumed thread is decided by
+    // the same checks as a fresh one. Neither flag claims the operation will
+    // succeed: compact() requires its correlated compaction item and turn
+    // completion, the handoff requires a valid maintenance result, and a
+    // failure retains the saved reference and requires explicit recovery. A
+    // missing or failed observation refuses startup below and names the
+    // observation.
     this.nativeMaintenancePolicyFailures = Object.entries(this.imagePolicy)
-      .filter(([key, value]) => !CodexAdapter.imageOnlyPolicy.includes(key) && value !== true)
+      .filter(([key, value]) => !CodexAdapter.evidenceOnlyPolicy.includes(key) && value !== true)
       .map(([key]) => key);
+    this.nativeImagePolicyVerified = !this.nativeMaintenancePolicyFailures.length;
+    this.tools.registerRetrievalBridge({ key: codexImageBridge.key, report: this.imageSupport() });
     // A required observation that failed or is missing means the room cannot
     // enforce its policy on this thread at all, so startup refuses with the
     // observations named rather than continuing on any route.

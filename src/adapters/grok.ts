@@ -14,7 +14,7 @@ import type {
   TurnResult,
   AdapterEvent,
 } from '../types.js';
-import { JsonLinesProcess, providerEnv, runProcess } from '../process.js';
+import { JsonLinesProcess, providerEnv, providerEventBytes, runProcess } from '../process.js';
 import {
   instructions,
   processOutputSchema as outputSchema,
@@ -25,12 +25,7 @@ import {
 import { IsolatedRuntime, roomToolNames } from './isolated.js';
 import { effortError } from '../providers.js';
 import { commandMode } from '../command-access.js';
-import {
-  AttachmentError,
-  attachmentLimits,
-  grokInitialContent,
-  type AttachmentAccess,
-} from '../attachments.js';
+import { AttachmentError, grokInitialContent, type AttachmentAccess } from '../attachments.js';
 
 const mcpNames = new Set(roomToolNames.map((name) => `chittr__${name}`));
 const allowedTools = new Set(['search_tool', 'use_tool', ...mcpNames]);
@@ -560,7 +555,7 @@ ${JSON.stringify(outputSchema)}
             method: 'session/prompt',
             params: parameters,
           }),
-        ) > attachmentLimits.nativeFrameCharacters
+        ) > providerEventBytes
       )
         throw new AttachmentError(
           'attachment-limit',

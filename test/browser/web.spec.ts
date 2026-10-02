@@ -720,11 +720,9 @@ test('shows agent keys consistently in activity, completions, replies and delive
   const codexSettings = page
     .getByRole('group', { name: 'Participant codex', exact: true })
     .locator('dd');
-  await expect(codexSettings).toHaveCount(3);
+  await expect(codexSettings).toHaveCount(2);
   await expect(codexSettings.nth(0)).toHaveText('provider default');
   await expect(codexSettings.nth(1)).toHaveText('provider default');
-  await expect(codexSettings.nth(2)).toContainText('unsupported');
-  await expect(codexSettings.nth(2)).toContainText('no initial-image route is enabled for @codex');
   await expect(page.locator('.agent-card strong', { hasText: 'codex' })).toBeVisible();
   await expect(page.locator('.agent-card strong', { hasText: 'claude' })).toBeVisible();
   await composer.fill('@');
@@ -863,12 +861,15 @@ agents:
       [gemini, 'provider default', 'provider default', 'gemini'],
     ] as const) {
       const settings = participant.locator('dd');
-      await expect(settings).toHaveCount(3);
+      await expect(settings).toHaveCount(2);
       await expect(settings.nth(0)).toHaveText(model);
       await expect(settings.nth(1)).toHaveText(effort);
-      await expect(settings.nth(2)).toContainText('unsupported');
-      await expect(settings.nth(2)).toContainText(`no initial-image route is enabled for @${id}`);
+      // Image status is no longer repeated in the sidebar.
+      await expect(participant).not.toContainText('Initial images');
+      await expect(participant).not.toContainText(`no initial-image route is enabled for @${id}`);
     }
+    await expect(page.locator('.participant-image-reason, .agent-image-status')).toHaveCount(0);
+    await expect(page.locator('.participant-strip')).not.toContainText('Initial images');
     await expect(disabled).toContainText('disabled');
     await expect(disabled.locator('dd')).toHaveText([
       'custom-very-long-model-name-that-must-wrap-in-the-sidebar',
@@ -922,13 +923,9 @@ agents:
     const restoredSettings = page
       .getByRole('group', { name: 'Participant codex', exact: true })
       .locator('dd');
-    await expect(restoredSettings).toHaveCount(3);
+    await expect(restoredSettings).toHaveCount(2);
     await expect(restoredSettings.nth(0)).toHaveText('provider default');
     await expect(restoredSettings.nth(1)).toHaveText('provider default');
-    await expect(restoredSettings.nth(2)).toContainText('unsupported');
-    await expect(restoredSettings.nth(2)).toContainText(
-      'no initial-image route is enabled for @codex',
-    );
   }
 });
 
@@ -1234,7 +1231,15 @@ test('free-text questions show input immediately and keep question drafts isolat
 });
 
 // These use C2's real raw upload, draft/command, authenticated image read and saved-session storage.
-import { tinyPng, alternatePng, dimensionPng, paddedPng, widePng } from '../image-fixture.js';
+import {
+  tinyPng,
+  alternatePng,
+  dimensionPng,
+  interlacedPng,
+  noisePng,
+  solidPng,
+  widePng,
+} from '../image-fixture.js';
 const imageFile = (name: string, buffer = tinyPng()) => ({ name, mimeType: 'image/png', buffer });
 const imageInput = (page: Page) => page.getByLabel('Select images', { exact: true });
 const draftImages = (page: Page) => page.locator('.draft-images');
@@ -1333,8 +1338,7 @@ test('images: paste, drop, selection, ordered captions and image-only reply sema
   await composer.fill('@co');
   await expect(page.locator('.image-status-warning')).toHaveCount(0);
   await composer.fill('@codex ');
-  await expect(page.locator('.image-status-warning')).toContainText('Unsupported');
-  await expect(page.locator('.image-status-warning')).toContainText('@codex');
+  await expect(page.locator('.image-status-warning')).toContainText("@codex can't receive images");
   await composer.press('Enter');
   await expect(page.locator('[data-message-id="m3"]')).toBeVisible();
   expect((await state(page)).session.messages[2]!.recipients).toEqual(['codex']);
@@ -1375,8 +1379,9 @@ test('images: rejection, removal and late out-of-order uploads preserve the capt
     'second.png',
   ]);
   await page.unroute('**/api/attachments?*');
+  // A header without decodable pixels cannot be converted, so nothing is uploaded.
   await imageInput(page).setInputFiles(imageFile('too-wide.png', dimensionPng(4097, 1)));
-  await expect(draftImages(page)).toContainText('dimensions');
+  await expect(draftImages(page)).toContainText('This file could not be read as an image.');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Remove image too-wide.png' }).click();
   await imageInput(page).setInputFiles({
@@ -1384,7 +1389,7 @@ test('images: rejection, removal and late out-of-order uploads preserve the capt
     mimeType: 'text/plain',
     buffer: Buffer.from('no'),
   });
-  await expect(draftImages(page)).toContainText('Use PNG');
+  await expect(draftImages(page)).toContainText('This file could not be read as an image.');
   await page.getByRole('button', { name: 'Remove image no.txt' }).click();
   await page.getByRole('button', { name: 'Remove image first.png' }).click();
   await loadedImages(page);
@@ -1803,21 +1808,21 @@ test('images: text-only paste remains text and byte limits leave explicit remova
   await page.keyboard.press('Meta+V');
   await expect(messageInput(page)).toHaveValue(text);
   await expect(draftImages(page).locator('.image-tile')).toHaveCount(0);
-  await imageInput(page).setInputFiles(imageFile('oversize.png', paddedPng(1024 * 1024 + 1)));
-  await expect(draftImages(page)).toContainText('1 MiB');
-  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Remove image oversize.png' }).click();
+  // Three incompressible 1000 px PNGs pass through unchanged at about 2.6 MB each,
+  // so only two fit the 6 MiB per-message limit.
   await imageInput(page).setInputFiles(
-    [1, 2, 3, 4].map((n) => imageFile(`large-${n}.png`, paddedPng(850000))),
+    [1, 2, 3].map((n) => imageFile(`large-${n}.png`, noisePng(1000, 760, n))),
   );
-  await loadedImages(page, '.draft-images img', 3);
-  await expect(draftImages(page)).toContainText('3 MiB total');
+  await loadedImages(page, '.draft-images img', 2);
+  await expect(draftImages(page)).toContainText('Images exceed the 6 MiB per-message limit.');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Remove image large-4.png' }).click();
+  const accepted = new Set((await state(page)).session.composerAttachments.map((a) => a.filename));
+  const failed = ['large-1.png', 'large-2.png', 'large-3.png'].find((name) => !accepted.has(name))!;
+  await page.getByRole('button', { name: `Remove image ${failed}` }).click();
   await messageInput(page).fill('@human Large set');
   await messageInput(page).press('Enter');
   await expect(messageInput(page)).toHaveValue('');
-  expect((await state(page)).session.messages[0]!.attachments).toHaveLength(3);
+  expect((await state(page)).session.messages[0]!.attachments).toHaveLength(2);
 });
 
 test('images: delayed send acknowledgement preserves a newer accepted draft and closes views on session switch', async ({
@@ -2112,4 +2117,223 @@ test('images: reconnect reconciles host ownership and removal retry repeats the 
     before.session.messages[0]!.attachments,
   );
   expect(removals).toBe(2);
+});
+
+/** Bytes the host stored for an accepted attachment. */
+async function hostBytes(page: Page, id: string): Promise<Buffer> {
+  const sessionId = (await state(page)).session.id;
+  const response = await page.request.get(`/api/attachments/${id}?sessionId=${sessionId}`, {
+    headers: await authHeaders(page),
+  });
+  expect(response.ok()).toBe(true);
+  return response.body();
+}
+/** A real JPEG from the browser's own encoder. */
+async function jpeg(page: Page, width: number, height: number): Promise<Buffer> {
+  const bytes = await page.evaluate(
+    async ({ width, height }) => {
+      const canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = '#3a6';
+      context.fillRect(0, 0, width, height);
+      context.fillStyle = '#c33';
+      context.fillRect(width / 4, height / 4, width / 2, height / 2);
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
+      return [...new Uint8Array(await blob.arrayBuffer())];
+    },
+    { width, height },
+  );
+  return Buffer.from(bytes);
+}
+const attachmentNamed = async (page: Page, filename: string) =>
+  (await state(page)).session.composerAttachments.find((a) => a.filename === filename);
+
+test('images: the browser converts and shrinks images and passes host-ready PNGs through unchanged', async ({
+  page,
+}) => {
+  const uploads: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/attachments?'))
+      uploads.push(new URL(request.url()).searchParams.get('filename')!);
+  });
+  await messageInput(page).fill('@human Converted');
+  const photo = await jpeg(page, 3000, 2000);
+  await imageInput(page).setInputFiles({
+    name: 'photo.jpg',
+    mimeType: 'image/jpeg',
+    buffer: photo,
+  });
+  await expect.poll(() => attachmentNamed(page, 'photo.png')).toBeDefined();
+  expect(await attachmentNamed(page, 'photo.png')).toMatchObject({
+    mediaType: 'image/png',
+    width: 2000,
+    height: 1333,
+  });
+  await imageInput(page).setInputFiles(imageFile('wide.png', solidPng(3000, 100)));
+  await expect
+    .poll(() => attachmentNamed(page, 'wide.png'))
+    .toMatchObject({
+      width: 2000,
+      height: 67,
+    });
+  const ready = solidPng(1200, 800);
+  await imageInput(page).setInputFiles(imageFile('ready.png', ready));
+  await expect.poll(() => attachmentNamed(page, 'ready.png')).toBeDefined();
+  const passed = (await attachmentNamed(page, 'ready.png'))!;
+  expect(passed).toMatchObject({ width: 1200, height: 800, byteSize: ready.length });
+  expect((await hostBytes(page, passed.id)).equals(ready)).toBe(true);
+  await imageInput(page).setInputFiles(imageFile('interlaced.png', interlacedPng()));
+  await expect.poll(() => attachmentNamed(page, 'interlaced.png')).toBeDefined();
+  const reencoded = (await attachmentNamed(page, 'interlaced.png'))!;
+  expect(reencoded).toMatchObject({ width: 1, height: 1, mediaType: 'image/png' });
+  expect((await hostBytes(page, reencoded.id))[28]).toBe(0);
+  const noise = noisePng(2000, 1500);
+  expect(noise.length).toBeGreaterThan(3 * 1024 * 1024);
+  await imageInput(page).setInputFiles(imageFile('noise.png', noise));
+  await expect.poll(() => attachmentNamed(page, 'noise.png'), { timeout: 20000 }).toBeDefined();
+  const shrunk = (await attachmentNamed(page, 'noise.png'))!;
+  expect(shrunk.byteSize).toBeLessThanOrEqual(3 * 1024 * 1024);
+  expect(shrunk.width).toBeLessThan(2000);
+  // Browsers ignore bytes after IEND; the host does not, so the PNG is re-encoded.
+  const trailing = Buffer.concat([solidPng(10, 10), Buffer.from('trailing')]);
+  await imageInput(page).setInputFiles(imageFile('trailing.png', trailing));
+  await expect.poll(() => attachmentNamed(page, 'trailing.png')).toBeDefined();
+  const cleaned = (await attachmentNamed(page, 'trailing.png'))!;
+  expect(cleaned).toMatchObject({ width: 10, height: 10 });
+  expect((await hostBytes(page, cleaned.id)).equals(trailing)).toBe(false);
+  await loadedImages(page, '.draft-images img', 6);
+  const before = uploads.length;
+  // Neither arbitrary bytes nor a PNG with an intact header and no image data
+  // decode, so neither is uploaded.
+  await imageInput(page).setInputFiles([
+    { name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not an image') },
+    { name: 'truncated.png', mimeType: 'image/png', buffer: tinyPng().subarray(0, 33) },
+  ]);
+  for (const name of ['broken.png', 'truncated.png'])
+    await expect(draftImages(page).locator('.upload-item').filter({ hasText: name })).toContainText(
+      'This file could not be read as an image.',
+    );
+  expect(uploads.length).toBe(before);
+  expect(uploads).not.toContain('broken.png');
+  expect(uploads).not.toContain('truncated.png');
+  await page.getByRole('button', { name: 'Remove image broken.png' }).click();
+  await page.getByRole('button', { name: 'Remove image truncated.png' }).click();
+  await messageInput(page).press('Enter');
+  await expect(messageInput(page)).toHaveValue('');
+  expect((await state(page)).session.messages[0]!.attachments!.map((a) => a.filename)).toEqual([
+    'photo.png',
+    'wide.png',
+    'ready.png',
+    'interlaced.png',
+    'noise.png',
+    'trailing.png',
+  ]);
+});
+
+test('images: an in-page retry sends the same converted bytes under the same operation', async ({
+  page,
+}) => {
+  const attempts: { operationId: string; body: Buffer }[] = [];
+  await page.route('**/api/attachments?*', async (route) => {
+    attempts.push({
+      operationId: new URL(route.request().url()).searchParams.get('operationId')!,
+      body: route.request().postDataBuffer()!,
+    });
+    if (attempts.length === 1) await route.abort('failed');
+    else await route.continue();
+  });
+  await messageInput(page).fill('@human Retry');
+  await imageInput(page).setInputFiles({
+    name: 'retry.jpg',
+    mimeType: 'image/jpeg',
+    buffer: await jpeg(page, 640, 480),
+  });
+  await page.getByRole('button', { name: 'Retry upload retry.png' }).click();
+  await loadedImages(page);
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1]!.operationId).toBe(attempts[0]!.operationId);
+  expect(attempts[1]!.body.equals(attempts[0]!.body)).toBe(true);
+  expect(attempts[0]!.body.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+});
+
+test('images: selecting 20 images at once stages all 20 in selection order', async ({ page }) => {
+  const names = Array.from(
+    { length: 20 },
+    (_, index) => `image-${String(index).padStart(2, '0')}.png`,
+  );
+  await messageInput(page).fill('@human Twenty');
+  await imageInput(page).setInputFiles(
+    names.map((name, index) => imageFile(name, index % 2 ? alternatePng() : tinyPng())),
+  );
+  await loadedImages(page, '.draft-images img', 20);
+  expect((await state(page)).session.composerAttachments.map((a) => a.filename)).toEqual(names);
+  await messageInput(page).press('Enter');
+  await expect(messageInput(page)).toHaveValue('');
+  expect((await state(page)).session.messages[0]!.attachments).toHaveLength(20);
+});
+
+for (const kind of ['JPEG', 'downscaled PNG'] as const)
+  test(`images: a lost upload acknowledgement for a ${kind} recovers the same operation after reload`, async ({
+    page,
+  }) => {
+    const source =
+      kind === 'JPEG'
+        ? { name: 'lost.jpg', mimeType: 'image/jpeg', buffer: await jpeg(page, 2400, 1600) }
+        : imageFile('lost.png', solidPng(3000, 200));
+    let operationId = '';
+    let attachmentId = '';
+    const statuses: number[] = [];
+    await page.route('**/api/attachments?*', async (route) => {
+      const id = new URL(route.request().url()).searchParams.get('operationId')!;
+      if (!operationId) {
+        operationId = id;
+        const response = await route.fetch();
+        attachmentId = (await response.json()).attachment.id;
+        await route.abort('failed');
+        return;
+      }
+      expect(id).toBe(operationId);
+      const response = await route.fetch();
+      statuses.push(response.status());
+      await route.fulfill({ response });
+    });
+    await messageInput(page).fill('@human Lost conversion');
+    await imageInput(page).setInputFiles(source);
+    await expect(page.getByRole('button', { name: 'Retry upload lost.png' })).toBeVisible();
+    await page.reload();
+    await page.getByLabel(`Reselect ${source.name}`).setInputFiles(source);
+    await loadedImages(page);
+    const accepted = (await state(page)).session.composerAttachments;
+    expect(accepted.map((a) => a.id)).toEqual([attachmentId]);
+    expect(accepted[0]).toMatchObject({ filename: 'lost.png', mediaType: 'image/png' });
+    expect(Math.max(accepted[0]!.width, accepted[0]!.height)).toBeLessThanOrEqual(2000);
+    // The retry replayed the original operation: no changed-input conflict, no new operation.
+    expect(statuses).toEqual([201]);
+  });
+
+test('images: staged warnings show one line per affected recipient with collapsed details', async ({
+  page,
+}) => {
+  const composer = messageInput(page);
+  const warning = page.locator('.image-status-warning');
+  await composer.fill('@claude ');
+  await imageInput(page).setInputFiles(imageFile('status.png'));
+  await loadedImages(page);
+  // Every recipient can take images: no warning at all.
+  await expect(warning).toHaveCount(0);
+  await composer.fill('@claude @codex compare');
+  await expect(warning).toHaveCount(1);
+  await expect(warning).toHaveAttribute('role', 'status');
+  await expect(warning.locator(':scope > div')).toHaveText(["@codex can't receive images"]);
+  const reason = warning.getByText('@codex: no initial-image route is enabled for @codex');
+  await expect(reason).toBeHidden();
+  await warning.getByText('Details', { exact: true }).click();
+  await expect(reason).toBeVisible();
+  // A broadcast resolves to every enabled agent; only the affected one is listed.
+  await composer.fill('Everyone');
+  await expect(warning.locator(':scope > div')).toHaveText(["@codex can't receive images"]);
+  await composer.fill('@human only');
+  await expect(warning).toHaveCount(0);
+  await expect(page.locator('.agent-image-status, .participant-image-reason')).toHaveCount(0);
+  await expect(page.locator('.sidebar')).not.toContainText('Initial images');
 });

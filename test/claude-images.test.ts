@@ -2,6 +2,7 @@ import { expect, it, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { AttachmentStore, attachmentLimits } from '../src/attachments.js';
+import { providerEventBytes } from '../src/process.js';
 import { AttachmentResult } from '../src/attachment-result.js';
 import { assertClaudeFrame, claudeInitialContent } from '../src/claude-images.js';
 import { tinyPng, paddedPng } from './image-fixture.js';
@@ -74,9 +75,9 @@ it('rejects absent resolvers, changed metadata, PNG bytes and hashes before enco
     ).toThrow();
 });
 it('enforces message count and batch aggregate limits independently', () => {
-  const f = fixture(5);
-  expect(() => claudeInitialContent([f.message], f.access)).toThrow('four images');
-  const large = fixture(4, paddedPng(attachmentLimits.perImageBytes));
+  const f = fixture(21);
+  expect(() => claudeInitialContent([f.message], f.access)).toThrow('at most 20 images');
+  const large = fixture(3, paddedPng(attachmentLimits.perImageBytes));
   expect(() =>
     claudeInitialContent(
       large.attachments.map((a, i) => ({ ...large.message, id: `m${i}`, attachments: [a] })),
@@ -84,20 +85,19 @@ it('enforces message count and batch aggregate limits independently', () => {
     ),
   ).toThrow('aggregate');
 });
-it('bounds full native requests and escaped multibyte replay text without raising limits', () => {
-  expect(attachmentLimits.nativeFrameCharacters).toBe(8 * 1024 * 1024);
+it('bounds full native requests and escaped multibyte replay text by the shared reader cap', () => {
+  expect(providerEventBytes).toBe(64 * 1024 * 1024);
+  const ascii = 'a'.repeat(60 * 1024 * 1024);
+  expect(() => assertClaudeFrame({ message: { content: ascii } }, 1)).not.toThrow();
+  expect(() => assertClaudeFrame({ message: { content: ascii } }, 2)).toThrow('replay');
+  // Three UTF-8 bytes per character: 22 Mi characters are 66 MiB on the wire.
   expect(() =>
-    assertClaudeFrame({ message: { content: 'a'.repeat(7 * 1024 * 1024) } }, 1),
-  ).not.toThrow();
-  expect(() => assertClaudeFrame({ message: { content: 'a'.repeat(7 * 1024 * 1024) } }, 2)).toThrow(
-    'replay',
-  );
-  expect(() =>
-    assertClaudeFrame({ message: { content: '界'.repeat(3 * 1024 * 1024) } }, 1),
+    assertClaudeFrame({ message: { content: '界'.repeat(22 * 1024 * 1024) } }, 1),
   ).toThrow('replay');
-  expect(() => assertClaudeFrame({ message: { content: '"'.repeat(3 * 1024 * 1024) } }, 1)).toThrow(
-    'replay',
-  );
+  // A JSON-escaped replay of a quote is four bytes per character.
+  expect(() =>
+    assertClaudeFrame({ message: { content: '"'.repeat(16 * 1024 * 1024) } }, 1),
+  ).toThrow('replay');
 });
 it('rechecks authority and the complete MCP envelope immediately before dispatch', () => {
   const { access, message } = fixture();
@@ -111,7 +111,7 @@ it('rechecks authority and the complete MCP envelope immediately before dispatch
     'claude-mcp-image',
   );
   expect(result.response({ jsonrpc: '2.0', id: 3 }).result.content[1]?.type).toBe('image');
-  expect(() => result.response({ jsonrpc: '2.0', id: '界'.repeat(2 * 1024 * 1024) })).toThrow(
+  expect(() => result.response({ jsonrpc: '2.0', id: '界'.repeat(11 * 1024 * 1024) })).toThrow(
     'replay',
   );
   active = false;
@@ -119,24 +119,30 @@ it('rechecks authority and the complete MCP envelope immediately before dispatch
   expect(() => JSON.stringify(result)).toThrow('cannot be serialized');
 });
 
-it('fits a complete maximum 3 MiB batch and a doubled 1 MiB retrieval replay', () => {
-  const { access, message } = fixture(3, paddedPng(attachmentLimits.perImageBytes));
-  const content = [
-    { type: 'text', text: '界'.repeat(20000) },
-    ...claudeInitialContent([message], access),
-  ];
-  expect(() =>
-    assertClaudeFrame(
-      {
-        type: 'user',
-        uuid: randomUUID(),
-        session_id: randomUUID(),
-        parent_tool_use_id: null,
-        message: { role: 'user', content },
-      },
-      1,
-    ),
-  ).not.toThrow();
+it('fits complete maximum 6 MiB and 20-image batches and a doubled 3 MiB retrieval replay', () => {
+  const perImage = attachmentLimits.aggregateBytes / attachmentLimits.imagesPerMessage;
+  for (const batch of [
+    fixture(2, paddedPng(attachmentLimits.perImageBytes)),
+    fixture(attachmentLimits.imagesPerMessage, paddedPng(Math.floor(perImage))),
+  ]) {
+    const content = [
+      { type: 'text', text: '界'.repeat(20000) },
+      ...claudeInitialContent([batch.message], batch.access),
+    ];
+    expect(() =>
+      assertClaudeFrame(
+        {
+          type: 'user',
+          uuid: randomUUID(),
+          session_id: randomUUID(),
+          parent_tool_use_id: null,
+          message: { role: 'user', content },
+        },
+        1,
+      ),
+    ).not.toThrow();
+  }
+  const { access, message } = fixture(1, paddedPng(attachmentLimits.perImageBytes));
   const result = new AttachmentResult(
     message.id,
     access.resolve(message.attachments![0]!.id),

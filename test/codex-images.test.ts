@@ -6,7 +6,7 @@ import { AttachmentResult } from '../src/attachment-result.js';
 import { assertCodexFrame, codexInitialContent, codexSessionPolicy } from '../src/codex-images.js';
 import { tinyPng, paddedPng } from './image-fixture.js';
 import type { Message } from '../src/types.js';
-import { JsonLinesProcess } from '../src/process.js';
+import { JsonLinesProcess, providerEventBytes } from '../src/process.js';
 import { codexImageSupport, registeredImageMapping } from '../src/image-support.js';
 const dirs: string[] = [];
 afterEach(() => {
@@ -74,9 +74,9 @@ it('rejects absent resolvers, changed metadata, PNG bytes and hashes before enco
     expect(() => codexInitialContent([message], { ...access, resolve: () => corrupted })).toThrow();
 });
 it('enforces message count and batch aggregate limits independently', () => {
-  const f = fixture(5);
-  expect(() => codexInitialContent([f.message], f.access)).toThrow('four images');
-  const large = fixture(4, paddedPng(attachmentLimits.perImageBytes));
+  const f = fixture(21);
+  expect(() => codexInitialContent([f.message], f.access)).toThrow('at most 20 images');
+  const large = fixture(3, paddedPng(attachmentLimits.perImageBytes));
   expect(() =>
     codexInitialContent(
       large.attachments.map((a, i) => ({ ...large.message, id: `m${i}`, attachments: [a] })),
@@ -86,7 +86,8 @@ it('enforces message count and batch aggregate limits independently', () => {
 });
 
 it('bounds full requests, responses and escaped multibyte replay envelopes', () => {
-  const f = fixture(3, paddedPng(attachmentLimits.perImageBytes));
+  // A complete maximum batch: two 3 MiB images are the 6 MiB per-message limit.
+  const f = fixture(2, paddedPng(attachmentLimits.perImageBytes));
   const request = {
     id: 1,
     method: 'turn/start',
@@ -99,11 +100,11 @@ it('bounds full requests, responses and escaped multibyte replay envelopes', () 
     },
   };
   expect(() => assertCodexFrame(JSON.stringify(request))).not.toThrow();
-  expect(attachmentLimits.nativeFrameCharacters).toBe(8 * 1024 * 1024);
+  expect(providerEventBytes).toBe(64 * 1024 * 1024);
   for (const text of [
-    'x'.repeat(8 * 1024 * 1024),
-    '界'.repeat(3 * 1024 * 1024),
-    '"'.repeat(3 * 1024 * 1024),
+    'x'.repeat(64 * 1024 * 1024),
+    '界'.repeat(22 * 1024 * 1024),
+    '"'.repeat(16 * 1024 * 1024),
   ]) {
     expect(() => assertCodexFrame(JSON.stringify({ id: text, result: {} }))).toThrow(
       'transport limit',
@@ -178,7 +179,7 @@ it('prevents writes after revocation during serialization or a full-envelope lim
   ).toThrow('revoked');
   active = true;
   expect(() =>
-    result.dispatchCodex('界'.repeat(3 * 1024 * 1024), (response, validate) => {
+    result.dispatchCodex('界'.repeat(22 * 1024 * 1024), (response, validate) => {
       JsonLinesProcess.prototype.send.call(wire as any, response, validate);
     }),
   ).toThrow('transport limit');
@@ -203,11 +204,7 @@ it('keeps unapproved Codex mappings unavailable without echoing private identiti
     requestedEffort: 'xhigh',
     observedModel: 'gpt-6-astra',
     observedEffort: 'xhigh',
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
     nativePolicyVerified: true,
-    sessionOrigin: 'fresh' as const,
   };
   // An unreadable identity is a diagnostic, so an otherwise eligible report stays
   // available and carries no reason text at all.
@@ -228,7 +225,7 @@ it('keeps unapproved Codex mappings unavailable without echoing private identiti
   expect(registeredImageMapping('future-native-image', 'codex')).toBe(false);
 });
 
-it('requires the revised native policy and rejects unknown or resumed environment projections', () => {
+it('records environment projections as evidence and decides images by the native policy result', () => {
   const response = {
     cwd: '/workspace',
     activePermissionProfile: { id: 'profile', extends: null },
@@ -256,11 +253,7 @@ it('requires the revised native policy and rejects unknown or resumed environmen
     requestedEffort: 'xhigh',
     observedModel: 'gpt-6-astra',
     observedEffort: 'xhigh',
-    permissions: { edits: false, commands: false, network: false },
-    skillsEnabled: false,
-    commandMode: 'off' as const,
     nativePolicyVerified: true,
-    sessionOrigin: 'fresh' as const,
   };
   expect(codexImageSupport(tuple).initial.available).toBe(true);
   // An unlisted build is decided by the same live observations, not by its
@@ -277,23 +270,13 @@ it('requires the revised native policy and rejects unknown or resumed environmen
       retrieval: { available: true },
     });
   for (const changed of [
-    { ...tuple, sessionOrigin: 'resumed' as const },
     { ...tuple, nativePolicyVerified: false },
+    { ...tuple, nativePolicyVerified: undefined },
     { ...tuple, observedModel: undefined },
     { ...tuple, observedEffort: undefined },
-    { ...tuple, skillsEnabled: true },
-    { ...tuple, commandMode: 'sandboxed' as const },
   ]) {
     const report = codexImageSupport(changed);
     expect(report.initial.available).toBe(false);
     expect(report.retrieval.available).toBe(false);
   }
-  expect(
-    codexImageSupport({
-      ...tuple,
-      permissions: { edits: true, commands: true, network: true },
-      skillsEnabled: true,
-      commandMode: 'trusted',
-    }).retrieval.available,
-  ).toBe(true);
 });

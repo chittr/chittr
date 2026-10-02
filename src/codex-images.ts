@@ -7,6 +7,7 @@ import {
   type AttachmentAccess,
 } from './attachments.js';
 import type { Message } from './types.js';
+import { providerEventBytes } from './process.js';
 
 /** #51's revised criterion treats roots as an environment projection. The
  * direct filesystem grant and native feature denies are checked separately.
@@ -34,14 +35,14 @@ export function codexSessionPolicy(result: any, workspace: string, profile: stri
 }
 
 /** Bound the final wire frame and a JSON-escaped replay with existing headroom.
- * UTF-8 byte length is at least as strict as the incoming character limit.
+ * UTF-8 byte length is what the provider reader bounds.
  */
 export function assertCodexFrame(serialized: string): void {
   const size = Math.max(
     Buffer.byteLength(serialized),
     Buffer.byteLength(JSON.stringify(serialized)),
   );
-  if (size + 256 * 1024 > attachmentLimits.nativeFrameCharacters)
+  if (size + 256 * 1024 > providerEventBytes)
     throw new AttachmentError('attachment-limit', 'Codex image frame exceeds the transport limit');
 }
 

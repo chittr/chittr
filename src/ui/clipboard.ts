@@ -41,7 +41,7 @@ export async function readClipboardImage(
 ): Promise<{ bytes: Buffer; filename: string }> {
   if (process.platform !== 'darwin')
     throw new Error('Image clipboard requires macOS. Save a PNG and use /attach <path>.');
-  const { attachmentLimits } = await import('../attachments.js');
+  const { attachmentLimits, formatAttachmentBytes } = await import('../attachment-limits.js');
   const limit = attachmentLimits.perImageBytes;
   const script = `ObjC.import('AppKit');
     const board = $.NSPasteboard.generalPasteboard;
@@ -92,7 +92,7 @@ export async function readClipboardImage(
     empty: 'Clipboard is empty.',
     'text-only': 'Clipboard has no image; ordinary text paste is unchanged.',
     'unsupported-image': 'Clipboard image is not PNG.',
-    'over-limit': 'Clipboard PNG exceeds 1 MiB.',
+    'over-limit': `Clipboard PNG exceeds the ${formatAttachmentBytes(limit)} per-image limit.`,
     failed: 'Clipboard image could not be read.',
   };
   if (result.status !== 'ok' || typeof result.base64 !== 'string')
@@ -101,6 +101,8 @@ export async function readClipboardImage(
     );
   const bytes = Buffer.from(result.base64, 'base64');
   if (bytes.length > limit)
-    throw new Error('Clipboard PNG exceeds 1 MiB. Save a smaller PNG and use /attach <path>.');
+    throw new Error(
+      `Clipboard PNG exceeds the ${formatAttachmentBytes(limit)} per-image limit. Save a smaller PNG and use /attach <path>.`,
+    );
   return { bytes, filename: 'clipboard.png' };
 }
