@@ -2,6 +2,12 @@
 
 Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://semver.org); before 1.0, a minor version can change behavior.
 
+## [Unreleased]
+
+### Added
+
+- The browser sidebar has a **System / Light / Dark** theme picker. **System** follows the operating system setting and is the default. A Light or Dark choice applies before the page first draws and is remembered across launches in a `chittr-theme` cookie, because each launch uses a new port and per-port browser storage would forget it.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added
