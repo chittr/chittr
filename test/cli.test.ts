@@ -4,6 +4,57 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { updateFixture } from './update-fixture.js';
+
+it('dispatches built update before invalid config, setup, sessions and locks, and reports the fresh version', () => {
+  const f = updateFixture({}, true);
+  try {
+    mkdirSync(join(f.workspace, '.agents'));
+    writeFileSync(join(f.workspace, '.agents/chittr.yaml'), 'invalid: [');
+    const result = f.run(['update']);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Updating Chittr 1.0.0 to 1.1.0');
+    expect(result.stdout).toContain('Updated Chittr to 1.1.0');
+    expect(existsSync(join(f.home, '.agents'))).toBe(false);
+    expect(readFileSync(join(f.workspace, '.agents/chittr.yaml'), 'utf8')).toBe('invalid: [');
+    expect(f.calls().map((call) => call.args[0])).toEqual(['root', 'view', 'install']);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+it('built update help/version and rejected arguments never invoke npm or create state', () => {
+  const f = updateFixture({}, true);
+  try {
+    for (const flag of ['--help', '--version']) {
+      const result = f.run(['update', '--web', '--instructions-file', 'missing', flag]);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toContain(flag === '--help' ? 'chittr update' : '1.0.0');
+    }
+    for (const args of [
+      ['extra'],
+      ['--new'],
+      ['--web'],
+      ['--session', 'id'],
+      ['--state-dir', join(f.dir, 'state')],
+      ['--trusted-commands'],
+      ['--instructions-file', 'missing'],
+      ['--json'],
+    ]) {
+      const result = f.run(['update', ...args]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('accepts no additional arguments');
+    }
+    expect(f.calls()).toEqual([]);
+    expect(existsSync(join(f.dir, 'state'))).toBe(false);
+    expect(existsSync(join(f.workspace, '.agents'))).toBe(false);
+    expect(existsSync(join(f.home, '.agents'))).toBe(false);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
 
 it.each(['missing', 'directory', 'oversized'])(
   'rejects a %s launch file before setup, locking or participant startup',
@@ -71,6 +122,7 @@ it('reports the package version and Chittr help from a different launch director
     expect(help.stderr).toBe('');
     expect(help.stdout.startsWith(`Chittr ${manifest.version}:`)).toBe(true);
     expect(help.stdout).toContain('Usage: chittr');
+    expect(help.stdout).toContain('chittr update');
     expect(help.stdout).toContain('--instructions-file PATH');
     expect(help.stdout).toContain('not resume, --session or doctor');
     expect(help.stdout).toContain('/reload updates YAML and keeps the saved brief');

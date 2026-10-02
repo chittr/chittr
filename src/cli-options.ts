@@ -20,6 +20,11 @@ export function parseCliOptions(args = process.argv.slice(2)) {
   const command = positionals[0] ?? 'new';
   const sessionId = values.session ?? (command === 'resume' ? positionals[1] : undefined);
   if (!values.help && !values.version) {
+    if (command === 'update') {
+      if (positionals.length !== 1 || tokens.some((token) => token.kind === 'option'))
+        throw new Error('chittr update accepts no additional arguments. Run chittr --help.');
+      return { values, command, sessionId };
+    }
     if (values['instructions-file'] !== undefined) {
       if (!values['instructions-file'].trim())
         throw new Error('--instructions-file requires a nonempty path.');

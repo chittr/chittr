@@ -2,6 +2,13 @@
 
 Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://semver.org); before 1.0, a minor version can change behavior.
 
+## Unreleased
+
+### Added
+
+- `chittr update` updates a verified npm-global installation to npm's latest release,
+  with version and Node compatibility checks, streamed npm output and a backup reminder.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

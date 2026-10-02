@@ -8,6 +8,12 @@ Launch in the exact directory agents should inspect. For example, launching in `
 
 `chittr` always starts a new chat and preserves previous conversations. Run `chittr resume` to browse saved chats from this exact directory, most recently updated first. Use ↑/↓ to select, Enter to resume, or Escape to cancel. Type to search conversation previews or session IDs; PgUp/PgDn and Home/End navigate longer lists. `chittr resume ID` opens a specific saved chat directly.
 
+For an npm-global installation, `chittr update` updates the running package to
+npm's latest release without starting a room. Close all other rooms and make a
+complete backup first. See [upgrade and roll back](installation.md#upgrade-and-roll-back)
+for installation scope, older releases and recovery. The command accepts no room
+options or extra arguments; `chittr update --help` and `--version` show CLI information.
+
 ## Launch with a shared brief
 
 ```sh

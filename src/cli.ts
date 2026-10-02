@@ -16,6 +16,7 @@ import { providerIds, providers as providerInfo } from './providers.js';
 import { commandAccessSummary } from './command-access.js';
 import { version } from './version.js';
 import { readInstructionFile } from './instructions.js';
+import { updateInstallation } from './update.js';
 
 const launchEnvironment = { ...process.env };
 
@@ -24,6 +25,7 @@ const help = `Chittr ${version}: a local room with Codex, Claude Code, Grok Buil
 Usage: chittr [--web] [--instructions-file PATH]
        chittr resume [ID] [--web]
        chittr doctor [--json]
+       chittr update       Update this npm-global installation to the latest release
 
 chittr starts a new chat. Resume opens a picker of saved chats for this directory,
 most recent first. Use arrow keys to select, Enter to resume, or Escape to cancel.
@@ -221,6 +223,10 @@ async function main(): Promise<void> {
   }
   if (values.version) {
     process.stdout.write(`${version}\n`);
+    return;
+  }
+  if (command === 'update') {
+    await updateInstallation(new URL(import.meta.url));
     return;
   }
   const workspace = realpathSync(process.cwd());

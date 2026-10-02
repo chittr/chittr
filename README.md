@@ -83,6 +83,7 @@ chittr            # start a new chat in the terminal
 chittr --web      # start a new chat in the browser
 chittr resume     # pick a saved chat from this directory
 chittr doctor     # check configured providers without a chat turn
+chittr update     # update this npm-global installation after closing rooms and backing up
 ```
 
 When no config exists, interactive setup offers to create `~/.agents/chittr.yaml` and asks
