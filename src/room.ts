@@ -226,6 +226,9 @@ export class Room extends EventEmitter {
     this.emit('change');
   }
   async start(): Promise<void> {
+    // Commit the initial brief before any provider can receive its contents.
+    this.changed();
+    if (this.fatal || this.closed) return;
     await Promise.all(
       Object.values(this.config.agents).map((agent) => {
         let state = this.session.agents[agent.id];
@@ -235,7 +238,7 @@ export class Room extends EventEmitter {
             connection: 'unavailable',
             activity: 'available',
             paused: false,
-            fingerprint: agent.fingerprint,
+            fingerprint: this.participant(agent.id)!.fingerprint,
             contextThrough: 0,
             draft: '',
           };
@@ -254,7 +257,7 @@ export class Room extends EventEmitter {
     this.schedule();
   }
   private connect(id: string, hold?: boolean): Promise<void> {
-    if (this.closed) return Promise.resolve();
+    if (this.closed || this.fatal) return Promise.resolve();
     const existing = this.connections.get(id);
     if (existing) return existing;
     const pending = this.connectAgent(id, hold).finally(() => {
@@ -263,8 +266,25 @@ export class Room extends EventEmitter {
     this.connections.set(id, pending);
     return pending;
   }
+  /** Keep the reusable base config free of session data and preserve legacy empty identity. */
+  private participant(id: string, config = this.config): AgentConfig | undefined {
+    const agent = config.agents[id];
+    if (!agent) return undefined;
+    const shared = config.instructions ?? '';
+    const brief = this.session.launchBrief?.text ?? '';
+    return {
+      ...agent,
+      conversationInstructions: brief,
+      fingerprint:
+        shared || brief
+          ? createHash('sha256')
+              .update(JSON.stringify([agent.fingerprint, shared, brief]))
+              .digest('hex')
+          : agent.fingerprint,
+    };
+  }
   private async connectAgent(id: string, hold?: boolean): Promise<void> {
-    const agent = this.config.agents[id];
+    const agent = this.participant(id);
     if (!agent || this.connecting.has(id)) return;
     this.connecting.add(id);
     const previous = this.session.agents[id];
@@ -293,6 +313,10 @@ export class Room extends EventEmitter {
       return;
     }
     this.changed();
+    if (this.fatal) {
+      this.connecting.delete(id);
+      return;
+    }
     let adapter: AgentAdapter | undefined;
     try {
       adapter = this.factory(
@@ -1118,7 +1142,7 @@ export class Room extends EventEmitter {
   ): Promise<AgentAdapter> {
     this.assertMaintenance(operation);
     const adapter = this.factory(
-      this.config.agents[id]!,
+      this.participant(id)!,
       this.config,
       this.environment,
       this.persistence.attachmentAccess?.(this.session.id),
@@ -1501,8 +1525,8 @@ export class Room extends EventEmitter {
     this.session.configSources = [...config.sources];
     try {
       for (const id of new Set([...Object.keys(old.agents), ...Object.keys(config.agents)])) {
-        const agent = config.agents[id];
-        const previous = old.agents[id];
+        const agent = this.participant(id, config);
+        const previous = this.participant(id, old);
         if (!agent) {
           await this.adapters
             .get(id)

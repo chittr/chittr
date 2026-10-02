@@ -22,6 +22,7 @@ export class Wire extends EventEmitter {
   servers: any[] = [];
   settings: Record<string, string> = {};
   profile = '';
+  instructions = '';
   resume = false;
   resolve?: (value: unknown) => void;
   reject?: (error: Error) => void;
@@ -47,11 +48,16 @@ export class Wire extends EventEmitter {
         .find((key) => key.startsWith('permissions.') && key.endsWith('.filesystem'))
         ?.split('.')[1] ?? '';
     if (command === 'claude') {
+      this.instructions = args[args.indexOf('--append-system-prompt') + 1]!;
       this.resume = args.includes('--resume');
       this.sessionId = args[args.indexOf(this.resume ? '--resume' : '--session-id') + 1]!;
       this.servers = [JSON.parse(args[args.indexOf('--mcp-config') + 1]!).mcpServers.chittr];
     }
     if (command === 'agy') {
+      this.instructions = readFileSync(
+        join(env!.HOME!, '.gemini/config/agents/chittr/agent.md'),
+        'utf8',
+      );
       this.servers = [
         JSON.parse(readFileSync(join(env!.HOME!, '.gemini/config/mcp_config.json'), 'utf8'))
           .mcpServers.chittr,
@@ -69,6 +75,8 @@ export class Wire extends EventEmitter {
         }),
       );
     }
+    if (command === 'grok')
+      this.instructions = readFileSync(args[args.indexOf('--agent-profile') + 1]!, 'utf8');
     wires.push(this);
   }
   send(value: any, validate?: (serialized: string) => void) {

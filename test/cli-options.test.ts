@@ -2,6 +2,33 @@ import { expect, it } from 'vitest';
 import { parseCliOptions } from '../src/cli-options.js';
 
 it.each([[], ['--web'], ['--new'], ['--new', '--web']])(
+  'accepts a launch brief for a new chat: %j',
+  (...args) => {
+    expect(
+      parseCliOptions([...args, '--instructions-file', ' brief with spaces.md ']).values[
+        'instructions-file'
+      ],
+    ).toBe(' brief with spaces.md ');
+  },
+);
+it.each([
+  ['--instructions-file'],
+  ['--instructions-file', ''],
+  ['--instructions-file', '  '],
+  ['--instructions-file', 'one', '--instructions-file=two'],
+  ['--instructions-file=one', '--instructions-file=one'],
+  ['resume', '--instructions-file', 'brief'],
+  ['resume', 'id', '--instructions-file', 'brief'],
+  ['--session', 'id', '--instructions-file', 'brief'],
+  ['doctor', '--instructions-file', 'brief'],
+])('rejects invalid brief arguments: %j', (...args) => {
+  expect(() => parseCliOptions(args)).toThrow();
+});
+it.each(['--help', '--version'])('does not validate the launch file for %s', (flag) => {
+  expect(() => parseCliOptions([flag, '--instructions-file', 'missing.md'])).not.toThrow();
+});
+
+it.each([[], ['--web'], ['--new'], ['--new', '--web']])(
   'starts a new chat without an implicit saved session: %j',
   (...args) => {
     const options = parseCliOptions(args);

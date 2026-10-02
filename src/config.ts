@@ -8,6 +8,7 @@ import type { AgentConfig, RoomConfig, SkillCatalog, Provider } from './types.js
 import { effortError, providerIds } from './providers.js';
 import { discoverSkills } from './skills.js';
 import { resolveCommandAccess } from './command-access.js';
+import { readInstructionFile } from './instructions.js';
 
 const displayName = z
   .string()
@@ -56,6 +57,10 @@ const agents = z.record(
 const schema = z
   .object({
     version: z.literal(1),
+    instructions: z
+      .object({ sources: z.array(source).optional() })
+      .strict()
+      .optional(),
     human: z.object({ name: displayName.optional() }).strict().optional(),
     skills: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     conversation: z
@@ -111,6 +116,7 @@ export function loadConfig(
   };
   const paths = configPaths(workspace, home);
   let trustedSource: string | undefined;
+  let roomInstructions: { path: string; sources: z.infer<typeof source>[] } | undefined;
   let selected:
     { path: string; key: 'agents' | 'defaultAgents'; entries: z.infer<typeof agents> } | undefined;
   for (const path of paths) {
@@ -129,6 +135,8 @@ export function loadConfig(
           `Trust can only be granted through trustedCommands.workspaces in ${paths[0]} or --trusted-commands. permissions.commands must remain a boolean.`,
         );
       const layer = schema.parse(raw);
+      if (layer.instructions !== undefined)
+        roomInstructions = { path, sources: layer.instructions.sources ?? [] };
       if (layer.trustedCommands) {
         for (const entry of layer.trustedCommands.workspaces) {
           const expanded = entry.startsWith('~/') ? join(home, entry.slice(2)) : entry;
@@ -188,32 +196,27 @@ export function loadConfig(
       `${path}: ${key} is empty. Configure at least one agent${key === 'agents' && path !== paths[0] ? ', or omit agents to use your user defaults' : ''}`,
     );
   config.provenance.agents = path;
+  if (roomInstructions) {
+    config.instructions = resolveInstructions(
+      roomInstructions.sources,
+      roomInstructions.path,
+      home,
+      'instructions',
+    );
+    config.provenance.instructions = roomInstructions.path;
+  }
   const catalogs = new Map<string, SkillCatalog>();
   for (const [id, value] of Object.entries(entries)) {
     if (!value.provider)
       throw new ConfigError(
         `${path}: ${key}.${id}.provider is required; agent definitions are self-contained`,
       );
-    const texts: string[] = [];
-    try {
-      for (const item of value.instructions?.sources ?? []) {
-        if ('text' in item) texts.push(item.text);
-        else {
-          const file = resolve(
-            dirname(path),
-            item.file.startsWith('~/') ? join(home, item.file.slice(2)) : item.file,
-          );
-          const content = readFileSync(file, 'utf8');
-          if (Buffer.byteLength(content) > 1024 * 1024)
-            throw new Error(`Instruction file exceeds 1 MiB: ${file}`);
-          texts.push(`Instructions from ${file}:\n${content}`);
-        }
-      }
-    } catch (error) {
-      throw new ConfigError(
-        `${path}: ${key}.${id}.instructions: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const instructions = resolveInstructions(
+      value.instructions?.sources ?? [],
+      path,
+      home,
+      `${key}.${id}.instructions`,
+    );
     for (const field of Object.keys(value)) config.provenance[`${key}.${id}.${field}`] = path;
     let skills: SkillCatalog | undefined;
     if (config.skills?.enabled && value.enabled !== false) {
@@ -226,7 +229,7 @@ export function loadConfig(
       enabled: value.enabled ?? true,
       ...(value.model ? { model: value.model } : {}),
       ...(value.effort ? { effort: value.effort } : {}),
-      instructions: texts.join('\n\n'),
+      instructions,
       ...(skills ? { skills } : {}),
     };
     config.agents[id] = {
@@ -242,6 +245,26 @@ export function loadConfig(
     };
   }
   return config;
+}
+function resolveInstructions(
+  sources: z.infer<typeof source>[],
+  path: string,
+  home: string,
+  field: string,
+): string {
+  try {
+    return sources
+      .map((item) => {
+        if ('text' in item) return item.text;
+        const file = readInstructionFile(item.file, dirname(path), home);
+        return `Instructions from ${file.source}:\n${file.text}`;
+      })
+      .join('\n\n');
+  } catch (error) {
+    throw new ConfigError(
+      `${path}: ${field}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 export function parseProviderSelection(choice: string, installed: Provider[]): Provider[] {
   const selected = [...new Set(choice.split(/[,\s]+/).filter(Boolean))];

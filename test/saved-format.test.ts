@@ -88,6 +88,7 @@ const core = (session: Session) => ({
 it('loads, lists and round-trips the checked-in older-shape version-1 fixture', () => {
   const original = fixture();
   for (const absent of [
+    'launchBrief',
     'composerAttachments',
     'composerDraftRevision',
     'composerDraftVersions',

@@ -8,6 +8,31 @@ Launch in the exact directory agents should inspect. For example, launching in `
 
 `chittr` always starts a new chat and preserves previous conversations. Run `chittr resume` to browse saved chats from this exact directory, most recently updated first. Use ↑/↓ to select, Enter to resume, or Escape to cancel. Type to search conversation previews or session IDs; PgUp/PgDn and Home/End navigate longer lists. `chittr resume ID` opens a specific saved chat directly.
 
+## Launch with a shared brief
+
+```sh
+chittr --instructions-file ./review-brief.md
+chittr --new --web --instructions-file ./review-brief.md
+```
+
+The file supplies shared instructions to every agent in the initial new conversation, alongside [room YAML and agent-specific instructions](configuration.md#custom-instructions). Relative paths resolve from the launch directory; absolute and `~/` paths also work. Quote paths containing spaces. Supply exactly one flag with a nonempty path. It works with `--new` and `--web`, but is rejected with `resume`, `--session` or `doctor`.
+
+Chittr reads and validates the file before first-run setup, workspace locking or participant startup. Missing, unreadable and over-1-MiB files fail launch. `--help` and `--version` do not read the file. The size limit applies to each file, not the aggregate provider prompt; transport limits may still make a participant unavailable.
+
+The file may live outside the workspace. Its contents are sent to participating providers and saved with the conversation before any participant starts. Editing or deleting the source later does not change that saved brief, and the saved path is only an origin label. A save failure prevents participant startup.
+
+| Action                                    | Room YAML                  | Conversation brief                                    |
+| ----------------------------------------- | -------------------------- | ----------------------------------------------------- |
+| New CLI launch with `--instructions-file` | Current selected YAML      | Read once and save                                    |
+| New launch without the flag               | Current selected YAML      | None                                                  |
+| `resume`, `--session`, `/sessions ID`     | Current selected YAML      | Restore destination's saved text                      |
+| `/new`                                    | Current selected YAML      | None, even when the previous conversation had a brief |
+| Idle `/reload`                            | Re-read selected YAML      | Keep the saved brief                                  |
+| Reconnect, add or re-enable an agent      | Current room configuration | Keep the active brief                                 |
+| `/compact` or context recovery            | Current room configuration | Keep the active brief                                 |
+
+`/config` identifies the active instruction sources. There is no command to edit or clear an existing saved brief; start a new conversation to use a different one. Instruction text does not appear as a chat message. Within custom guidance, the brief takes precedence over room YAML, then agent instructions. This is a prompt instruction, not a permission grant or guarantee of compliance.
+
 ## Browser interface
 
 ```sh
