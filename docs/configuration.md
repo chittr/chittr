@@ -116,38 +116,71 @@ To migrate an existing user config, rename its top-level `agents` key to `defaul
 
 ## Permissions
 
-Permissions apply to the **whole room**, and project config can grant them directly. Before launching in an unfamiliar project, read [what you grant agents](../PRIVACY.md#what-you-grant-agents). For example:
+Permissions apply to the whole room. There are three, and all start off:
 
 ```yaml
 version: 1
 permissions:
-  edits: true
-  commands: false
-  network: false
+  edits: true # write_file, and command writes inside the workspace
+  commands: true # run_command
+  network: false # fetch_url, and command network access
 ```
 
-Edits, sandboxed shell commands, and task networking are independent grants. File inspection works with all three off. Agents explain missing permissions and ask for a YAML change followed by idle `/reload`; there are no temporary chat approvals. Provider authentication and inference traffic are separate from task networking. See [privacy and permissions](../PRIVACY.md) for the trust boundaries.
+With all three off, agents can still talk and read files in the launch directory. Each grant is independent. With `commands: true` and `edits: false`, commands can read the workspace but not change it. `network` covers task traffic only. Provider login and inference traffic don't depend on it.
+
+User config loads first, then the project's `.agents/chittr.yaml`. Each key in the project file replaces the user value. A project can grant permissions you didn't, so read its config before launching in an unfamiliar project. [What you grant agents](../PRIVACY.md#what-you-grant-agents) lists what each grant exposes.
+
+Agents can't ask for a permission mid-conversation. They explain what's missing, and you change the YAML and run `/reload` while the room is idle.
+
+### Command modes
+
+`run_command` runs in one of three modes. `/config`, the terminal banner and the browser show the current one.
+
+| Mode        | When                                                                | Commands run                                                                                    |
+| ----------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `off`       | `commands: false`                                                   | Not at all                                                                                      |
+| `sandboxed` | `commands: true`                                                    | In Chittr's macOS sandbox, limited to the workspace and the room's `edits` and `network` grants |
+| `trusted`   | All three permissions `true`, plus a trust grant for this workspace | As your user account, with no sandbox                                                           |
 
 ## Trusted commands
 
-To use installed developer tools with their existing configuration and authentication, grant trusted commands to a workspace in your user config:
+Sandboxed commands work for builds and tests that stay inside the workspace. They can't use your accounts. They can't read the rest of your home directory, and Chittr starts them with only `PATH`, `LANG` and `TMPDIR` set, so `HOME`, tokens and your SSH agent are missing. Homebrew's `bin` directory isn't on their `PATH`. Commands that rely on your logins, such as `gh pr create` or `git push` over SSH, fail.
+
+Trusted commands run without the sandbox. They run through `/bin/sh` in the launch directory as your user, with your filesystem access, network access, existing logins and exported environment. They can read and write outside the workspace, including skill bundles. Interactive aliases and unexported functions are unavailable, and Chittr doesn't source shell startup files. Normal macOS restrictions, expired logins and Keychain prompts still apply. Provider connections keep their credential filters. Only developer commands get the unfiltered environment.
+
+### Granting trust
+
+Only your user config can grant trust, one workspace at a time:
 
 ```yaml
-# Add to ~/.agents/chittr.yaml
+# ~/.agents/chittr.yaml
 trustedCommands:
   workspaces:
     - ~/Projects/your-project
 ```
 
-Trust matches the launch directory's exact realpath. Nested directories and other worktrees need their own entries. Project YAML cannot set `trustedCommands`; `permissions.commands` remains a boolean in both files.
+Each entry matches the launch directory's exact realpath. Subdirectories and other worktrees need their own entries. Chittr rejects `trustedCommands` in project config, and `permissions.commands` stays a boolean in both files. A project can't grant itself trust.
 
-Trusted execution activates only when the effective `edits`, `commands`, and `network` permissions are all `true`. A persistent grant with any permission off leaves commands off or sandboxed. The terminal banner, browser, and `/config` explain which settings prevent activation and where they came from. You can put a trusted workspace into discussion mode by disabling commands in its project config.
+For a single launch, pass `--trusted-commands` to `chittr`, `chittr resume` or `chittr --web`. The flag writes no configuration.
 
-For one launch, use `chittr --trusted-commands`, `chittr resume --trusted-commands`, or add the flag to `--web`. This flag writes no configuration and requires all three permissions already enabled; conflicting settings produce an error. Existing `commands: true` rooms stay sandboxed without a matching user grant or this flag.
+### Why trust needs all three permissions
 
-Trusted commands run without Chittr's command sandbox, with the launching user's filesystem access, network access, existing credentials and exported environment. They can read and write outside the workspace, including skill bundles. File tools keep their workspace and read-only skill restrictions, but these restrictions do not fence trusted commands. Commands use `/bin/sh` from the launch directory. Interactive aliases and unexported functions are unavailable, and shell startup files are not sourced automatically. Normal macOS restrictions, expired logins and Keychain prompts still apply. Provider connections retain their existing credential filters; trusted developer commands receive the unfiltered launch environment.
+A trust grant adds no permission of its own. Without the sandbox, `edits` and `network` can't limit what a command does. Chittr therefore activates trust only when all three are already `true`, so a room set to `network: false` never runs commands that can reach the network.
 
-Run `/reload` while idle after changing a persistent grant. Changes in command mode restart participants with current tools and instructions, restoring public conversation history. Resume and `/sessions ID` recalculate authorization from current settings and this process's launch flag. A saved conversation cannot restore an old grant or a previous process's one-off flag. The environment is captured once at launch; relaunch Chittr to pick up exported environment changes.
+If a permission is off, the result depends on where trust came from:
+
+- With a `trustedCommands` entry, trust stays inactive. Commands fall back to `sandboxed`, or to `off` if `commands` is false. `/config`, the banner and the browser name the blocking permission and the file that set it.
+- With `--trusted-commands`, Chittr refuses to launch and lists the disabled permissions.
+
+Project config overrides permissions, so a project can switch trust off for its room. `commands: false` makes the room discussion only. Turning off `edits` or `network` keeps commands sandboxed. It also works the other way. If your user config leaves a permission off and the project turns all three on, your grant for that workspace activates. Read a project's config before you add it to `workspaces`.
+
+### What trust leaves alone
+
+`read_file`, `write_file` and `list_files` keep the same limits in every mode. They reach only the launch directory and read-only skill bundles. Those limits don't apply to trusted commands. A room with `commands: true` and no grant or flag stays sandboxed.
+
+### Reloading and resuming
+
+Run `/reload` while idle after changing a grant. A mode change restarts participants with current tools and instructions, then restores the public conversation. Resume and `/sessions ID` recompute the mode from current settings and this process's launch flag. A saved conversation can't bring back an old grant or a previous launch's flag. Chittr captures the environment once at launch, so relaunch to pick up exported changes.
 
 ## Skills
 
