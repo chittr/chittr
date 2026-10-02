@@ -1,5 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { test, expect, type Page } from '@playwright/test';
 import type { WebState } from '../../src/web-types.js';
 import { participantStatus } from '../../src/participant-status.js';
@@ -819,6 +821,67 @@ test('room controls, saved conversation restore, and responsive layout', async (
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.screenshot({ path: '.local/web-dark.png', fullPage: true, animations: 'disabled' });
+});
+
+test('a theme choice overrides the system scheme, survives reload and a new port, and can follow the system again', async ({
+  page,
+  context,
+}) => {
+  const theme = page.getByRole('group', { name: 'Theme' });
+  const background = () =>
+    page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+  const savedTheme = async () =>
+    (await context.cookies()).find((cookie) => cookie.name === 'chittr-theme')?.value;
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(theme.getByRole('button', { name: 'System' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await background()).toBe('rgb(27, 33, 30)');
+  await theme.getByRole('button', { name: 'Light' }).click();
+  await expect(theme.getByRole('button', { name: 'Light' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await background()).toBe('rgb(250, 251, 249)');
+  expect(await savedTheme()).toBe('light');
+  await page.screenshot({ path: '.local/web-theme-light-on-dark.png', animations: 'disabled' });
+
+  // The pre-paint script applies the choice before the app renders.
+  await page.route('**/assets/*.js', (route) => route.abort());
+  await page.reload();
+  expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('light');
+  expect(await background()).toBe('rgb(250, 251, 249)');
+  await page.unroute('**/assets/*.js');
+
+  // A later launch binds a different loopback port; the host cookie still applies there.
+  const script = readFileSync('dist/web/theme.js');
+  const other = createServer((request, response) => {
+    if (request.url === '/theme.js') {
+      response.writeHead(200, { 'Content-Type': 'text/javascript' });
+      response.end(script);
+    } else response.end('<!doctype html><script src="/theme.js"></script>');
+  });
+  await new Promise<void>((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const second = await context.newPage();
+  try {
+    await second.goto(`http://127.0.0.1:${(other.address() as AddressInfo).port}/`);
+    expect(await second.evaluate(() => document.documentElement.dataset.theme)).toBe('light');
+  } finally {
+    await second.close();
+    other.close();
+  }
+
+  await page.reload();
+  await theme.getByRole('button', { name: 'Dark' }).click();
+  expect(await savedTheme()).toBe('dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  expect(await background()).toBe('rgb(27, 33, 30)');
+  await theme.getByRole('button', { name: 'System' }).click();
+  expect(await savedTheme()).toBeUndefined();
+  expect(await background()).toBe('rgb(250, 251, 249)');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  expect(await background()).toBe('rgb(27, 33, 30)');
 });
 
 test('project agents replace the fallback roster in the room and sidebar after reload', async ({

@@ -54,7 +54,7 @@ In either composer, Up recalls your latest sent message, then moves through olde
 
 Click **Reply** on a message to quote it above the composer, then type and send. Your existing draft stays in place. **Cancel reply** or Escape removes the reply target without discarding your text. The target stays with your draft across refresh and saved-session resume. Sent replies link back to the original message.
 
-Use the room buttons to pause, stop, continue, or quit. Each agent's `···` button opens its individual controls. Failed and interrupted deliveries have retry buttons; capped exchanges offer additional follow-up turns. All existing slash commands also work. The sidebar opens saved conversations and effective configuration. Configuration changes still require YAML edits and an idle reload. Restored sessions start active; queued messages run as agents connect, while failed and interrupted deliveries still require an explicit retry.
+Use the room buttons to pause, stop, continue, or quit. Each agent's `···` button opens its individual controls. Failed and interrupted deliveries have retry buttons; capped exchanges offer additional follow-up turns. All existing slash commands also work. The sidebar opens saved conversations and effective configuration, and its theme picker switches between the system colour scheme, light and dark; the browser remembers a light or dark choice across launches. Configuration changes still require YAML edits and an idle reload. Restored sessions start active; queued messages run as agents connect, while failed and interrupted deliveries still require an explicit retry.
 
 ### Images
 

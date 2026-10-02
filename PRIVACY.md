@@ -39,6 +39,8 @@ or permits deletion. Check the settings and terms for your own account with
 - The browser keeps its launch token, drafts and pending request identities in
   origin-scoped tab storage. The printed browser link grants access to that
   running room. Keep it private. Closing the tab does not stop the room.
+  A light or dark theme choice is kept in a `chittr-theme` cookie for
+  `127.0.0.1`; it holds only that choice.
 - Codex and Claude can retain their own native session records outside Chittr's
   storage. Grok uses a temporary native profile that Chittr removes on normal
   close. A crash can leave temporary files behind. Provider credentials remain
