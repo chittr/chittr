@@ -29,6 +29,7 @@ import {
   type AttachmentAccess,
   type StageAttachmentInput,
 } from './attachments.js';
+import { launchBriefSchema } from './instructions.js';
 const strings = z.array(z.string());
 const activity = z.enum(['available', 'considering', 'replying', 'working', 'waiting']);
 const attempt = z.object({
@@ -52,6 +53,7 @@ const savedSession = z.object({
     .optional(),
   pinnedMessageIds: strings.optional(),
   configSources: strings,
+  launchBrief: launchBriefSchema.optional(),
   permissions: z.object({ edits: z.boolean(), commands: z.boolean(), network: z.boolean() }),
   commandMode: z.enum(['off', 'sandboxed', 'trusted']).optional(),
   notices: z.array(z.object({ id: z.string(), text: z.string(), createdAt: z.string() })),
@@ -207,6 +209,7 @@ export class SessionStore implements Persistence {
     if (!this.lockToken) throw new Error('Session storage requires the workspace lock');
     if (session.workspace !== this.workspace || !/^[\da-f-]{36}$/.test(session.id))
       throw new Error('Invalid session identity');
+    launchBriefSchema.optional().parse(session.launchBrief);
     validateQuestionHistory(session.messages);
     freezeLegacyQuestions(session.messages);
     const folder = join(this.directory, session.id);

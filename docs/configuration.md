@@ -90,11 +90,15 @@ queues and terminal/browser controls.
 
 ## Custom instructions
 
-Custom instruction sources are read in their listed order from the selected roster only. Provider guidance and the room protocol remain in place. For example:
+Set top-level `instructions.sources` once to give every room participant shared guidance. Keep agent-specific sources for individual roles. Sources are read in their listed order. For example:
 
 ```yaml
 # <launch directory>/.agents/chittr.yaml
 version: 1
+instructions:
+  sources:
+    - file: instructions/room.md
+    - text: Discuss proposals before making changes.
 agents:
   codex:
     provider: codex
@@ -108,7 +112,15 @@ agents:
         - text: Focus on the end-user experience of this project.
 ```
 
-That file reference resolves to `.agents/instructions/review.md` beside the project config. Instruction files are explicit configuration inputs and may live outside the task workspace. They are read on launch or idle reload. Unused fallback instruction files are not read. Unknown fields, unreadable selected instructions, and per-agent permission policies are rejected. `/config` shows effective settings and their source files.
+The project room block replaces the user room block as a whole. Omitting it inherits the user block; `instructions: {}` or `instructions: {sources: []}` clears it. This selection is independent of the roster: a project config with only shared instructions uses your default agents. Agent definitions still come only from the selected roster, and their instructions remain self-contained.
+
+Those file references resolve beside the YAML, for example `.agents/instructions/room.md`. Absolute paths and `~/` paths also work. These are explicit configuration inputs and may be outside the task workspace; reading them does not require task-tool permission. Only selected room and agent sources are read, on launch, resume or idle `/reload`. Unknown fields and unreadable selected files produce configuration errors. Each file has a 1 MiB UTF-8 limit. That limit validates an individual file, not the aggregate provider prompt; existing transport limits can still make a participant unavailable.
+
+For a brief belonging to one conversation, launch with `chittr --instructions-file ./review-brief.md`. Chittr reads the file once and saves its text with the conversation. See [launch with a shared brief](usage.md#launch-with-a-shared-brief) for path rules, valid flags and the lifecycle table.
+
+The prompt labels YAML room instructions, the saved conversation brief and agent instructions separately. Within custom guidance, the saved brief takes precedence over room YAML, then agent instructions. This is prompt guidance, not guaranteed model compliance. Provider guidance, the required room protocol and actual tool permissions remain authoritative; instructions grant no extra permissions or routing authority.
+
+`/config` shows the selected room YAML source, including an explicit clearing override, and whether the conversation has a saved brief and its origin. Editing shared YAML and running idle `/reload` restarts affected participants with current instructions and public history. It retains the saved brief. Agent-only instruction changes restart only that participant.
 
 ## Migrating an older user config
 

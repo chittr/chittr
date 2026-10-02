@@ -255,6 +255,33 @@ try:
         terminal.exited(1)
         assert '--trusted-commands requires' in terminal.frame()
         assert b'\x1b[?1049h' not in terminal.output
+    brief_project = base / 'brief-project'
+    configure(brief_project)
+    for flags in ((), ('--new',)):
+        brief_file = base / 'launch brief.md'
+        brief_file.write_text('Shared launch brief')
+        existing = saved(brief_project)
+        with Terminal(brief_project, *flags, '--instructions-file', '../launch brief.md') as terminal:
+            terminal.text('CHITTR')
+            terminal.wait(lambda: len(saved(brief_project)) == len(existing) + 1)
+            brief_id = next(id for id in saved(brief_project) if id not in existing)
+            brief = saved(brief_project)[brief_id]['launchBrief']
+            assert brief == {'text': 'Shared launch brief', 'source': str(brief_file)}
+            terminal.send(b'/new\r')
+            terminal.wait(lambda: len(saved(brief_project)) == len(existing) + 2)
+            fresh = next(s for id, s in saved(brief_project).items()
+                         if id not in existing and id != brief_id)
+            assert 'launchBrief' not in fresh
+            terminal.send(b'/quit\r')
+            terminal.exited()
+        brief_file.unlink()
+        with Terminal(brief_project, 'resume', brief_id) as terminal:
+            terminal.text('CHITTR')
+            terminal.wait(lambda: saved(brief_project)[brief_id]['paused'] is False)
+            assert saved(brief_project)[brief_id]['launchBrief'] == brief
+            terminal.send(b'/quit\r')
+            terminal.exited()
+    print('PASS CLI PTY: launch instructions saved, /new isolation, resume after source deletion')
     print('PASS CLI PTY: trusted launch flag, visible account access, same-process new chat, '
           'resume without inherited trust, conflicting flag rejected before UI startup')
     print('PASS CLI PTY: fresh launches, active resume, local history ordering, keyboard/search selection, restored draft, '

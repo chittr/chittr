@@ -1,9 +1,53 @@
 import { it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+it.each(['missing', 'directory', 'oversized'])(
+  'rejects a %s launch file before setup, locking or participant startup',
+  (kind) => {
+    const workspace = mkdtempSync(join(tmpdir(), 'chittr-cli-brief-'));
+    const entry = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+    const file = join(workspace, 'brief.md');
+    const state = join(workspace, 'state');
+    try {
+      if (kind === 'directory') mkdirSync(file);
+      if (kind === 'oversized') writeFileSync(file, 'x'.repeat(1024 * 1024 + 1));
+      const result = spawnSync(
+        process.execPath,
+        [entry, '--web', '--state-dir', state, '--instructions-file', file],
+        {
+          cwd: workspace,
+          env: { HOME: workspace, PATH: '' },
+          encoding: 'utf8',
+          timeout: 5000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/ENOENT|EISDIR|exceeds 1 MiB/);
+      expect(result.stdout).toBe('');
+      expect(existsSync(state)).toBe(false);
+      expect(existsSync(join(workspace, '.agents'))).toBe(false);
+      for (const flag of ['--help', '--version']) {
+        const info = spawnSync(process.execPath, [entry, flag, '--instructions-file', file], {
+          cwd: workspace,
+          env: { HOME: workspace, PATH: '' },
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+        expect(info.status).toBe(0);
+        expect(info.stderr).toBe('');
+      }
+      expect(existsSync(state)).toBe(false);
+      expect(existsSync(join(workspace, '.agents'))).toBe(false);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  },
+);
 
 it('reports the package version and Chittr help from a different launch directory', () => {
   const workspace = mkdtempSync(join(tmpdir(), 'chittr-cli-identity-'));
@@ -27,6 +71,10 @@ it('reports the package version and Chittr help from a different launch director
     expect(help.stderr).toBe('');
     expect(help.stdout.startsWith(`Chittr ${manifest.version}:`)).toBe(true);
     expect(help.stdout).toContain('Usage: chittr');
+    expect(help.stdout).toContain('--instructions-file PATH');
+    expect(help.stdout).toContain('not resume, --session or doctor');
+    expect(help.stdout).toContain('/reload updates YAML and keeps the saved brief');
+    expect(help.stdout).toContain('/new has no\nbrief');
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

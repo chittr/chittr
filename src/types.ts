@@ -32,11 +32,15 @@ export interface AgentConfig {
   model?: string;
   effort?: string;
   instructions: string;
+  /** Session-owned guidance supplied by Room to adapters, never loaded from agent YAML. */
+  conversationInstructions?: string;
   fingerprint: string;
   skills?: SkillCatalog;
 }
 export interface RoomConfig {
   workspace: string;
+  /** Selected room-wide YAML instructions; no conversation-specific content. */
+  instructions?: string;
   humanName?: string;
   permissions: Permissions;
   commandAccess?: CommandAccess;
@@ -250,6 +254,11 @@ export interface Notice {
   text: string;
   createdAt: string;
 }
+export interface LaunchBrief {
+  text: string;
+  /** Descriptive origin only; never read again on resume. */
+  source: string;
+}
 /** Saved records, on-disk layout and load classification: see docs/saved-format-contract.md. */
 export interface Session {
   version: 1;
@@ -274,6 +283,7 @@ export interface Session {
   /** Historical display information only; never authorization on resume. */
   commandMode?: CommandMode;
   configSources: string[];
+  launchBrief?: LaunchBrief;
   composerDraft?: string;
   composerAttachments?: AttachmentMetadata[];
   composerDraftRevision?: number;

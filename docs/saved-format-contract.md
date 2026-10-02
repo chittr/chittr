@@ -119,6 +119,23 @@ boolean gate (`:249`), and returns that same object (`:390`). Fields outside
 
 ## Load classification
 
+`Session.launchBrief` is optional version-1 core data with exactly `text` and
+`source` string fields. `text` may be empty and is bounded to 1 MiB in UTF-8;
+`source` must be nonblank and is descriptive provenance, never a path to read
+on resume. `src/instructions.ts` owns this strict nested schema. Save validates
+it before writes, and load validates it at the core gate before normalization
+or auxiliary recovery. Missing data in an older session means no brief.
+
+| Class    | Brief condition                                                            | Result                                                                 | File effect                        | Evidence                                                                           |
+| -------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
+| accepted | Field absent or valid                                                      | Load the session; preserve saved brief text when present               | Normal existing load rules         | `test/room-instructions.test.ts` and legacy fixture in `test/saved-format.test.ts` |
+| rejected | Present field has an invalid shape, types, blank origin or text over 1 MiB | `Saved session is invalid or unsupported; it has not been overwritten` | No session or latest-index rewrite | `test/room-instructions.test.ts` malformed-brief cases                             |
+
+The launch brief is saved before any participant adapter is created. If that
+initial save fails, Room enters its existing fatal/paused storage-failure state
+without delivering the brief to a provider. Subsequent save failures retain
+the existing dispatch hold.
+
 `load(id?)` (`src/store.ts:238-391`) runs in a fixed order: resolve the pointer,
 check the id shape, parse the file, apply the core gate, apply the history and
 draft gates, normalize legacy questions, then recover auxiliary records. Every
@@ -213,6 +230,19 @@ were on disk before the load. It still contains the invalid auxiliary record,
 which is what it is kept for.
 
 ## Historical fields grant no authority
+
+The saved launch brief is restored user-supplied prompt guidance. It grants
+no tool permissions or routing authority. Current YAML room instructions and
+permissions are still loaded on resume; only the CLI brief's text is frozen
+with the conversation. Reload keeps it, `/new` omits it, and `/sessions` uses
+the destination's record. Its origin is never reread, even after the source
+file changes or disappears.
+
+The inspected older version-1 loader at `f2978814ecab86d4aab452f07ce26a256c924ca5`
+preserves unknown top-level fields through load/save but does not apply
+`launchBrief` to prompts. This is a property of that baseline, not a general
+downgrade guarantee. Resuming with an older build does not preserve the new
+instruction behavior.
 
 Saved `permissions`, `commandMode`, each agent's `fingerprint` and each agent's
 provider `sessionId` are data about the past. They are not authorization and not

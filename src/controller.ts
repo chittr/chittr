@@ -511,6 +511,15 @@ export class RoomController extends EventEmitter {
       commandAccessDescription,
       skills: config.skills ?? { enabled: true },
       followUpTurns: config.followUpTurns,
+      instructions: {
+        room: {
+          source: config.provenance.instructions ?? null,
+          empty: !config.instructions,
+        },
+        launchBrief: this.room.session.launchBrief
+          ? { source: this.room.session.launchBrief.source, saved: true }
+          : null,
+      },
       agents: Object.values(config.agents).map((a) => ({
         id: a.id,
         provider: a.provider,

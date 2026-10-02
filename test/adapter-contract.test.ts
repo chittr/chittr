@@ -15,6 +15,7 @@ import {
 import { ToolService } from '../src/tools.js';
 import type {
   AgentAdapter,
+  AgentConfig,
   AdapterEvent,
   Provider,
   RoomConfig,
@@ -102,7 +103,7 @@ function fixture() {
   return { sessionId, metadata, input };
 }
 type Fixture = ReturnType<typeof fixture>;
-function make(provider: Provider, f: Fixture) {
+function make(provider: Provider, f: Fixture, guidance: Partial<AgentConfig> = {}) {
   const adapter = createAdapter(
     {
       id: 'agent',
@@ -110,6 +111,7 @@ function make(provider: Provider, f: Fixture) {
       enabled: true,
       instructions: '',
       fingerprint: 'contract',
+      ...guidance,
       ...(provider === 'codex'
         ? { model: 'gpt-6-astra', effort: 'xhigh' }
         : provider === 'claude'
@@ -132,6 +134,26 @@ function make(provider: Provider, f: Fixture) {
   adapters.push(adapter);
   return adapter;
 }
+it.each(providers)('delivers all instruction layers through the %s transport', async (provider) => {
+  config.instructions = 'Shared YAML marker';
+  const adapter = make(provider, fixture(), {
+    instructions: 'Agent role marker',
+    conversationInstructions: 'Saved brief marker',
+  });
+  await adapter.start();
+  const wire = wires.at(-1)!;
+  const prompt: string =
+    provider === 'codex'
+      ? wire.sent.find((message) => message.method === 'thread/start').params.developerInstructions
+      : wire.instructions;
+  for (const text of [
+    'YAML room instructions:\nShared YAML marker',
+    'Saved conversation brief:\nSaved brief marker',
+    'Agent instructions:\nAgent role marker',
+    'Room protocol, required',
+  ])
+    expect(prompt).toContain(text);
+});
 it.each(['codex', 'grok'] as const)(
   'reports the installed package version to %s',
   async (provider) => {

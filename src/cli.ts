@@ -15,12 +15,13 @@ import type { Provider, RoomConfig } from './types.js';
 import { providerIds, providers as providerInfo } from './providers.js';
 import { commandAccessSummary } from './command-access.js';
 import { version } from './version.js';
+import { readInstructionFile } from './instructions.js';
 
 const launchEnvironment = { ...process.env };
 
 const help = `Chittr ${version}: a local room with Codex, Claude Code, Grok Build, and Antigravity
 
-Usage: chittr [--web]
+Usage: chittr [--web] [--instructions-file PATH]
        chittr resume [ID] [--web]
        chittr doctor [--json]
 
@@ -37,6 +38,12 @@ Options:
   --new              Start a new conversation (the default)
   --session ID       Open a saved conversation for this directory
   --state-dir PATH   Use a separate storage base, including for backup recovery
+  --instructions-file PATH
+                     Share one file with all agents in this new conversation.
+                     May combine with --new/--web; not resume, --session or doctor.
+                     Paths are relative to the launch directory, absolute, or ~/.
+                     Unreadable files or files over 1 MiB fail before startup.
+                     The saved brief survives file edits/deletion and resume.
   --trusted-commands Run commands with your account access for this launch.
                      Requires edits, commands, and network enabled.
   --help, -h         Show this help
@@ -80,6 +87,14 @@ Room commands:
 
 All permissions are room-wide. Missing grants require a config change and
 idle /reload. No temporary chat approvals. The preview requires macOS.
+
+Shared instructions: top-level YAML instructions.sources applies to all agents;
+agents can also have their own instructions.sources. Within custom guidance,
+the saved brief takes precedence over room YAML, then agent instructions.
+This is prompt guidance; provider rules, room protocol and permissions still apply.
+Resume and /sessions restore the destination brief with current YAML; /new has no
+brief. /reload updates YAML and keeps the saved brief. Reconnect and /compact keep
+the active brief. /config shows instruction sources. A brief cannot be edited in chat.
 `;
 async function detected(candidates: readonly Provider[] = providerIds): Promise<Provider[]> {
   const results = await Promise.all(
@@ -209,6 +224,10 @@ async function main(): Promise<void> {
     return;
   }
   const workspace = realpathSync(process.cwd());
+  const launchBrief =
+    values['instructions-file'] === undefined
+      ? undefined
+      : readInstructionFile(values['instructions-file'], workspace);
   const currentConfig = (directory: string) =>
     loadConfig(directory, undefined, { trustedCommands: values['trusted-commands'] });
   if (command === 'doctor') {
@@ -269,6 +288,8 @@ async function main(): Promise<void> {
       loadConfig: currentConfig,
       environment: launchEnvironment,
     });
+    // Only the initial new conversation owns this brief. Never capture it in currentConfig.
+    if (launchBrief) controller.room.session.launchBrief = launchBrief;
     let browserUrl: string | undefined;
     if (values.web) {
       const web = new WebUI(controller);

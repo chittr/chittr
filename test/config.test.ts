@@ -17,6 +17,76 @@ function fixture() {
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+it('selects shared instructions independently of the roster, replacing and clearing user sources', () => {
+  const { home, project } = fixture();
+  const user = join(home, '.agents/chittr.yaml');
+  const local = join(project, '.agents/chittr.yaml');
+  writeFileSync(
+    user,
+    `version: 1
+skills: {enabled: false}
+instructions: {sources: [{text: User room guidance}]}
+defaultAgents:
+  codex: {provider: codex, instructions: {sources: [{text: Agent guidance}]}}
+  claude: {provider: claude}
+`,
+  );
+  const inherited = loadConfig(project, home)!;
+  expect(inherited.instructions).toBe('User room guidance');
+  expect(inherited.provenance.instructions).toBe(user);
+  writeFileSync(join(project, '.agents/local.md'), 'Project file');
+  writeFileSync(join(home, 'home.md'), 'Home file');
+  writeFileSync(
+    local,
+    `version: 1
+instructions: {sources: [{text: First}, {file: local.md}, {file: ~/home.md}, {text: Last}]}
+`,
+  );
+  const selected = loadConfig(project, home)!;
+  expect(selected.instructions).toBe(
+    `First\n\nInstructions from ${join(realpathSync(project), '.agents/local.md')}:\nProject file\n\nInstructions from ${join(home, 'home.md')}:\nHome file\n\nLast`,
+  );
+  expect(Object.keys(selected.agents)).toEqual(['codex', 'claude']);
+  expect(selected.agents.codex!.instructions).toBe('Agent guidance');
+  expect(selected.provenance.instructions).toBe(realpathSync(local));
+  // Config fingerprints remain the base identities; Room adds session-aware shared identity.
+  expect(selected.agents.codex!.fingerprint).toBe(inherited.agents.codex!.fingerprint);
+  for (const clearing of ['{}', '{sources: []}']) {
+    writeFileSync(local, `version: 1\ninstructions: ${clearing}\n`);
+    const cleared = loadConfig(project, home)!;
+    expect(cleared.instructions).toBe('');
+    expect(cleared.provenance.instructions).toBe(realpathSync(local));
+    expect(cleared.agents.codex!.fingerprint).toBe(inherited.agents.codex!.fingerprint);
+  }
+});
+
+it('does not read unselected user room files and rejects selected failures with source context', () => {
+  const { home, project } = fixture();
+  writeStarter(['codex'], home);
+  const user = join(home, '.agents/chittr.yaml');
+  writeFileSync(
+    user,
+    readFileSync(user, 'utf8') + '\ninstructions: {sources: [{file: missing.md}]}\n',
+  );
+  expect(() => loadConfig(project, home)).toThrow(`${user}: instructions:`);
+  const local = join(project, '.agents/chittr.yaml');
+  writeFileSync(local, 'version: 1\ninstructions: {}\n');
+  expect(loadConfig(project, home)!.instructions).toBe('');
+  writeFileSync(local, 'version: 1\ninstructions: {sources: [{file: missing.md}]}\n');
+  expect(() => loadConfig(project, home)).toThrow(`${local}: instructions:`);
+  writeFileSync(join(project, '.agents/huge.md'), 'x'.repeat(1024 * 1024 + 1));
+  writeFileSync(local, 'version: 1\ninstructions: {sources: [{file: huge.md}]}\n');
+  expect(() => loadConfig(project, home)).toThrow('exceeds 1 MiB');
+  for (const value of [
+    '{mode: replace}',
+    '{sources: [{text: ok, file: bad}]}',
+    '{sources: [42]}',
+    'null',
+  ]) {
+    writeFileSync(local, `version: 1\ninstructions: ${value}\n`);
+    expect(() => loadConfig(project, home)).toThrow();
+  }
+});
 describe('config contract', () => {
   it('ignores pilot config before and after Chittr setup without changing the old files', () => {
     const { home, project } = fixture();
