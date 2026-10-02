@@ -98,6 +98,7 @@ Chittr does not search upward for a Git root or project config. Then see
   effort, instructions, permissions, trusted commands and skills.
 - [Use Chittr](docs/usage.md): the browser and terminal interfaces, addressing, questions,
   keyboard, room commands, saved conversations, recovery and context compaction.
+- [Changelog](CHANGELOG.md): what changed in each release.
 - [Privacy and permissions](PRIVACY.md): what leaves your Mac, what stays, and what you grant
   agents.
 - [Compatibility and validation](https://github.com/chittr/chittr/blob/main/docs/compatibility.md):

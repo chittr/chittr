@@ -58,11 +58,11 @@ process before replacing an installation or copying storage.
 
 Close every running Chittr process first. Uninstall removes the executable and
 package, while configuration and conversation data remain in place. To reinstall
-the identified 0.1.0 release:
+the identified 0.2.0 release:
 
 ```sh
 npm uninstall -g @chittr/cli
-npm install -g @chittr/cli@0.1.0
+npm install -g @chittr/cli@0.2.0
 ```
 
 Reopen from the same canonical workspace directory using the same storage base.
@@ -192,8 +192,8 @@ image continuity is unavailable.
 
 The npm package includes built runtime modules and workers, browser assets,
 configuration examples, this guide, the [configuration](configuration.md) and
-[usage](usage.md) guides, the README, [MIT licence](../LICENSE),
-[third-party notices](../THIRD_PARTY_NOTICES.md) and
+[usage](usage.md) guides, the README, [changelog](../CHANGELOG.md),
+[MIT licence](../LICENSE), [third-party notices](../THIRD_PARTY_NOTICES.md) and
 [privacy disclosures](../PRIVACY.md). It contains no provider CLI binaries,
 personal configuration, private evidence, tests or development scripts.
 Source maps and TypeScript declarations are excluded. Source is at
