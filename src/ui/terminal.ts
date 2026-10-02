@@ -25,6 +25,7 @@ import {
 } from '../completion-context.js';
 import { systemClipboard, type Clipboard } from './clipboard.js';
 import { TextSelection, type CopyRow } from './selection.js';
+import { markdownRows, type MarkdownRow } from './markdown.js';
 import {
   InputParser,
   previousBoundary,
@@ -43,6 +44,31 @@ const colors: Record<string, string> = { human: '\x1b[97m', codex: cyan, claude:
 export interface DisplayLine extends CopyRow {
   key: string;
   text: string;
+  source?: { owner: string; block: number; line: number };
+}
+// Completed message objects are borrowed and stable across projections. Retain
+// only their last layout; weak keys release it with the conversation. Drafts
+// are always parsed afresh. Returned rows remain independently owned.
+const messageLayouts = new WeakMap<object, { text: string; width: number; rows: MarkdownRow[] }>();
+function markdownLines(
+  text: string,
+  width: number,
+  owner: string,
+  message?: object,
+): DisplayLine[] {
+  let layout = message && messageLayouts.get(message);
+  if (!layout || layout.text !== text || layout.width !== width) {
+    layout = { text, width, rows: markdownRows(text, width - 2) };
+    if (message) messageLayouts.set(message, layout);
+  }
+  return layout.rows.map((row, i) => ({
+    ...row,
+    key: `${owner}:${row.source.block}:${row.source.line}:${i}`,
+    source: { ...row.source, owner },
+    contentStart: 2 + (row.contentStart ?? 0),
+    padding: row.padding?.map(({ start, end }) => ({ start: start + 2, end: end + 2 })),
+    text: `  ${row.text}`,
+  }));
 }
 function wrapped(text: string, width: number): string[] {
   return wrapAnsi(cleanText(text), Math.max(1, width), {
@@ -85,8 +111,7 @@ export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[]
       key: `${m.id}:header`,
       text: `${color}${fit(`${m.author === 'human' ? humanName : m.author}  #${m.id}${entry.pinned ? '  [pinned]' : ''}${m.recipients.length ? ' → ' + m.recipients.map((n) => (n === 'human' ? humanName : '@' + n)).join(' ') : ''}${m.replyTo.length ? '  ↳ ' + m.replyTo.map((id) => '#' + id).join(', ') : ''}`, width)}${reset}`,
     });
-    for (const [i, row] of copyWrapped(m.text, width - 2).entries())
-      lines.push({ ...row, key: `${m.id}:text:${i}`, text: `  ${row.text}` });
+    lines.push(...markdownLines(m.text, width, `${m.id}:text`, m));
     for (const attachment of m.attachments ?? [])
       for (const [i, row] of copyWrapped(
         'Image ' + attachmentLabel(attachment),
@@ -114,8 +139,7 @@ export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[]
         key: `${state.id}:draft-header`,
         text: `${colors[state.id] ?? cyan}${state.id}  ${state.active ? 'replying…' : 'incomplete response'}${reset}`,
       });
-      for (const [i, row] of copyWrapped(state.draft, width - 2).entries())
-        lines.push({ ...row, key: `${state.id}:draft:${i}`, text: `  ${row.text}` });
+      lines.push(...markdownLines(state.draft, width, `${state.id}:draft`));
     }
   }
   return lines;
@@ -131,7 +155,7 @@ export class TerminalUI {
   private mounted = false;
   private enhanced = false;
   private submitting = false;
-  private anchor?: string;
+  private anchor?: DisplayLine;
   private top = 0;
   private visibleHeight = 10;
   private cachedLines: DisplayLine[] = [];
@@ -659,7 +683,7 @@ export class TerminalUI {
   private scroll(amount: number): void {
     const max = Math.max(0, this.cachedLines.length - this.visibleHeight);
     this.top = Math.max(0, Math.min(max, (this.anchor ? this.top : max) + amount));
-    this.anchor = this.top >= max ? undefined : this.cachedLines[this.top]?.key;
+    this.anchor = this.top >= max ? undefined : this.cachedLines[this.top];
     this.draw();
   }
   draw(): void {
@@ -808,7 +832,21 @@ export class TerminalUI {
       });
     }
     if (this.anchor) {
-      const index = this.cachedLines.findIndex((l) => l.key === this.anchor);
+      const anchor = this.anchor;
+      let index = this.cachedLines.findIndex((l) => l.key === anchor.key);
+      if (index < 0 && anchor.source) {
+        const source = anchor.source;
+        index = this.cachedLines.findIndex(
+          (l) =>
+            l.source?.owner === source.owner &&
+            l.source.block === source.block &&
+            l.source.line === source.line,
+        );
+        if (index < 0)
+          index = this.cachedLines.findIndex(
+            (l) => l.source?.owner === source.owner && l.source.block === source.block,
+          );
+      }
       if (index >= 0) this.top = index;
       this.top = Math.min(this.top, Math.max(0, this.cachedLines.length - this.visibleHeight));
     } else this.top = Math.max(0, this.cachedLines.length - this.visibleHeight);

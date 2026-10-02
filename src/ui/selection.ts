@@ -5,8 +5,12 @@ export interface CopyRow {
   text: string;
   /** A visual wrap, rather than a newline in the original text. */
   continuation?: boolean;
-  /** Display-only padding to omit on subsequent selected rows. */
+  /** Display-only padding to omit on subsequent rows, and on the first when trimStart is set. */
   contentStart?: number;
+  /** Markdown body/draft rows omit padding even when the selection starts there. */
+  trimStart?: boolean;
+  /** Additional display-only cell spans inside a Markdown prefix, excluding visible markers. */
+  padding?: { start: number; end: number }[];
 }
 export interface Cell {
   x: number;
@@ -41,7 +45,11 @@ export class TextSelection {
     rows: CopyRow[],
     readonly start: Cell,
   ) {
-    this.rows = rows.map((row) => ({ ...row, text: stripAnsi(row.text) }));
+    this.rows = rows.map((row) => ({
+      ...row,
+      text: stripAnsi(row.text),
+      padding: row.padding?.map((padding) => ({ ...padding })),
+    }));
     this.end = start;
   }
   get moved(): boolean {
@@ -63,10 +71,19 @@ export class TextSelection {
       const bounds = this.bounds(y);
       if (!bounds) continue;
       const joins = previous === y - 1 && row.continuation;
-      const left = previous === undefined ? bounds[0] : Math.max(bounds[0], row.contentStart ?? 0);
+      const left =
+        previous === undefined && !row.trimStart
+          ? bounds[0]
+          : Math.max(bounds[0], row.contentStart ?? 0);
       const [start, end] = span(row.text, left, bounds[1]);
       if (previous !== undefined && !joins) result += '\n';
-      result += row.text.slice(start, end);
+      let cursor = start;
+      for (const padding of row.padding ?? []) {
+        const [from, to] = span(row.text, padding.start, padding.end);
+        result += row.text.slice(cursor, Math.max(cursor, Math.min(end, from)));
+        cursor = Math.max(cursor, Math.min(end, to));
+      }
+      result += row.text.slice(cursor, end);
       previous = y;
     }
     return result;

@@ -168,7 +168,7 @@ try:
     assert len(state()['messages'])==before_files, 'Selecting a file must not send'
     assert 'File explorer' not in '\n'.join(frame_lines())
     send(b'\x15@human Inspect "./explorer fixtures/note tw')
-    assert any('note two.md' in line for line in frame_lines())
+    assert any('note two.md' in line for line in frame_lines()), repr(frame_lines())
     row=next(i for i,line in enumerate(frame_lines()) if line=='· note two.md')
     mouse(0,3,row); mouse(0,3,row,True)
     expect_draft('@human Inspect `./explorer fixtures/note two.md` ')
@@ -215,7 +215,7 @@ try:
     assert clipboard()=='Selection'
     send(b'\x1b')
     wrapped='Wrap'+'x'*100+'\n  indented'
-    send(b'\x1b[200~@human '+wrapped.encode()+b'\x1b[201~\r')
+    send(b'\x1b[200~@human ```\n'+wrapped.encode()+b'\n```\x1b[201~\r')
     first=next(i for i,line in enumerate(frame_lines()) if line.startswith('  Wrap'))
     last=next(i for i,line in enumerate(frame_lines()) if line=='    indented')
     mouse(0,2,first); mouse(32,11,last); mouse(0,11,last,True)
@@ -272,6 +272,18 @@ try:
     assert state()['composerAttachments']==[]
     expect_draft('')
     assert str(workspace/'photo one.png') not in json.dumps(state())
+    # Exercise styled Markdown in the real viewport and copy from its margin.
+    markdown='# Heading\n\nMarkdown **bold** and `inline`'
+    send(b'\x1b[200~@human '+markdown.encode()+b'\x1b[201~\r')
+    assert state()['messages'][-1]['text']==markdown, 'Rendering must preserve saved Markdown'
+    assert '  Heading' in frame_lines()
+    assert b'\x1b[1m' in frame_bytes() and b'\x1b[36m' in frame_bytes(), 'Markdown styles must survive painting'
+    row=next(i for i,line in enumerate(frame_lines()) if line=='  Markdown bold and inline')
+    mouse(0,0,row); mouse(32,25,row); mouse(0,25,row,True)
+    assert clipboard()=='Markdown bold and inline', repr(clipboard())
+    send(b'\x03')
+    assert clipboard()=='Markdown bold and inline', 'Ctrl+C must recopy rendered Markdown'
+    send(b'\x1b')
     send('Retained draft 🧪'.encode())
     send(b'\x04')
     proc.wait(timeout=5)
@@ -284,7 +296,7 @@ try:
     assert b'\x1b[?1002l' in output and b'\x1b[?1006l' in output
     assert saved['workspace']==str(workspace)
     assert all(m['author']=='human' for m in saved['messages'] if m['author']!='codex'), 'The display name must not change stored participant identity'
-    print('PASS PTY: attachment action isolation, Tab literal path, staging/list/removal, cancellation/error caption preservation, copied-byte reply send, highlighted drag selection, clipboard copy/paste and error recovery, wrapped transcript/composer copying, selection during agent activity, wheel/keyboard scrolling, Enter/Ctrl+J/Ctrl+Enter, bracketed paste, completion, automatic file explorer with folder navigation and mouse selection, Unicode draft, save and terminal restoration')
+    print('PASS PTY: Markdown styling and rendered copying from display padding, source preservation, attachment action isolation, Tab literal path, staging/list/removal, cancellation/error caption preservation, copied-byte reply send, highlighted drag selection, clipboard copy/paste and error recovery, wrapped transcript/composer copying, selection during agent activity, wheel/keyboard scrolling, Enter/Ctrl+J/Ctrl+Enter, bracketed paste, completion, automatic file explorer with folder navigation and mouse selection, Unicode draft, save and terminal restoration')
 finally:
     if proc.poll() is None: proc.kill(); proc.wait()
     os.close(master); shutil.rmtree(base)
