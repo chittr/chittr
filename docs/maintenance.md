@@ -83,7 +83,7 @@ exercise and its limitations; it is not verification of the current tree.
    and `/reply` can carry attachments; other commands reject them. `//` escapes
    a leading slash as message text.
 4. Update shared completion in `src/completion.ts`, help in `src/cli.ts` and
-   the README command table. Terminal-local `/attach` is separate: parsing and
+   the room command table in `docs/usage.md`. Terminal-local `/attach` is separate: parsing and
    help/completion live in `src/ui/attachment-input.ts`, with actions in
    `src/ui/terminal-attachments.ts`. The browser `/api/complete` endpoint
    rejects `/attach`; it is not a new controller command.

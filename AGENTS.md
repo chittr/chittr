@@ -15,7 +15,7 @@ configuration and instruction files are personal to a checkout and stay untracke
 the only bundle tracked here is `.agents/skills/deploy-website/`, which is Bill's
 maintainer deployment documentation rather than a contributor step.
 `.claude/skills/` is Claude's discovery path; this checkout links its website
-skill to the bundle in `.agents/skills/`. See the [README](README.md#skills)
+skill to the bundle in `.agents/skills/`. See [configure Chittr](docs/configuration.md#skills)
 for provider discovery paths.
 
 For the contribution process itself — the pull request loop, the credential-free
