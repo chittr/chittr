@@ -8,10 +8,13 @@ import { SessionStore } from '../src/store.js';
 import { TerminalUI } from '../src/ui/terminal.js';
 import { TerminalAttachments } from '../src/ui/terminal-attachments.js';
 import { tinyPng } from './image-fixture.js';
+import stripAnsi from 'strip-ansi';
+import stringWidth from 'string-width';
 
 let root: string, store: SessionStore, controller: RoomController, ui: TerminalUI;
 let stdin: EventEmitter, output: string;
 let read: ReturnType<typeof vi.fn<() => Promise<string>>>;
+let write: ReturnType<typeof vi.fn<(text: string) => Promise<void>>>;
 function deferred<T>() {
   let resolve!: (v: T) => void, reject!: (e: Error) => void;
   const promise = new Promise<T>((yes, no) => {
@@ -60,15 +63,124 @@ beforeEach(() => {
   });
   vi.stubGlobal('process', { ...process, stdin, stdout });
   read = vi.fn(async () => 'clipboard text');
+  write = vi.fn(async (_text: string) => {});
   ui = new TerminalUI(
     controller.room,
     (line, sessionId) => controller.submitDraft({ source: 'terminal-text', line, sessionId }),
     async () => {},
-    { write: async () => {}, read },
+    { write, read },
     new TerminalAttachments(controller, workspace),
   );
   controller.on('room', (room) => ui.setRoom(room));
   ui.mount();
+});
+
+const screenLines = () => stripAnsi(frame()).split('\r\n');
+const bodyTop = () =>
+  screenLines()[2 + Math.ceil(stringWidth('Connecting participants…') / process.stdout.columns)]!;
+function draft(source: string) {
+  controller.room.session.agents.codex ??= {
+    id: 'codex',
+    connection: 'ready',
+    activity: 'replying',
+    paused: false,
+    fingerprint: 'fixture',
+    draft: '',
+    contextThrough: 0,
+  };
+  controller.room.session.agents.codex.draft = source;
+  controller.room.emit('change');
+}
+function scrollFromStart(steps: number) {
+  feed('\x1b[<64;1;4M'.repeat(100));
+  feed('\x1b[<65;1;4M'.repeat(steps));
+}
+
+it('anchors an unfinished code source line through closing, resize and removal fallback', () => {
+  process.stdout.columns = 24;
+  process.stdout.rows = 12;
+  const source =
+    '```ts\nfirst\n  named-code\n' + Array.from({ length: 20 }, (_, i) => `tail ${i}`).join('\n');
+  draft(source);
+  scrollFromStart(1);
+  expect(bodyTop()).toContain('named-code');
+  expect(frame()).toContain('History');
+  draft(source + '\n```\n\nLater output');
+  expect(bodyTop()).toContain('named-code');
+  expect(frame()).toContain('History');
+  process.stdout.columns = 20;
+  process.stdout.emit('resize');
+  expect(bodyTop()).toContain('named-code');
+  expect(frame()).toContain('History');
+  draft('```ts\n```\n\n' + Array.from({ length: 20 }, (_, i) => `after ${i}`).join('\n'));
+  expect(bodyTop()).toBe('  ts');
+  expect(frame()).toContain('History');
+});
+
+it('anchors a named table source row when a later wide cell reflows earlier rows', () => {
+  process.stdout.columns = 24;
+  process.stdout.rows = 12;
+  const table =
+    'Intro\n\n| A | B |\n| --- | --- |\n| named | v |\n' +
+    Array.from({ length: 20 }, (_, i) => `| later${i} | value |`).join('\n');
+  draft(table);
+  scrollFromStart(2);
+  expect(bodyTop()).toContain('named');
+  expect(frame()).toContain('History');
+  draft(table + '\n| final | ' + 'wide'.repeat(40) + ' |');
+  expect(bodyTop()).toContain('named');
+  expect(frame()).toContain('History');
+});
+
+it('holds styled selection through incoming output, copies on release and Ctrl+C, and refreshes at its anchor', async () => {
+  process.stdout.columns = 24;
+  process.stdout.rows = 12;
+  const source =
+    '```ts\nfirst\n  named-code\n' + Array.from({ length: 20 }, (_, i) => `tail ${i}`).join('\n');
+  draft(source);
+  scrollFromStart(1);
+  const initial = screenLines().slice(0, -1);
+  feed('\x1b[<0;1;4M\x1b[<32;24;4M');
+  const held = screenLines().slice(0, -1);
+  draft(source + '\n```\n\nNew text');
+  expect(screenLines().slice(0, -1)).toEqual(held);
+  feed('\x1b[<0;24;4m');
+  await vi.waitFor(() => expect(write).toHaveBeenCalledWith('  named-code'));
+  feed('\x03');
+  await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+  feed('\x1b');
+  await vi.waitFor(() => expect(bodyTop()).toContain('named-code'));
+  expect(frame()).toContain('History');
+  expect(screenLines().slice(0, -1)).toEqual(initial);
+  feed('**raw composer**');
+  expect(controller.room.session.composerDraft).toBe('**raw composer**');
+  expect(frame()).toContain('**raw composer**');
+  feed('\x1b');
+  await vi.waitFor(() => expect(frame()).toContain('Latest'));
+  draft(source + '\n```\n\nNewest tail');
+  expect(frame()).toContain('Newest tail');
+  expect(frame()).toContain('Latest');
+});
+
+it('preserves a completed Markdown anchor as later replies arrive and clears selection on resize', async () => {
+  process.stdout.columns = 24;
+  process.stdout.rows = 12;
+  await controller.submit('//**named-message**\n' + 'body\n'.repeat(30));
+  scrollFromStart(0);
+  // Header is the first row; scroll one page to a source line inside this message.
+  feed('\x1b[<65;1;4M');
+  const first = bodyTop();
+  expect(first).toContain('body');
+  expect(frame()).toContain('History');
+  await controller.submit('//new reply');
+  expect(bodyTop()).toBe(first);
+  expect(frame()).toContain('History');
+  feed('\x1b[<0;1;4M\x1b[<32;10;4M');
+  expect(frame()).toContain('\x1b[30;103m');
+  process.stdout.columns = 30;
+  process.stdout.emit('resize');
+  expect(frame()).not.toContain('\x1b[30;103m');
+  expect(bodyTop()).toBe(first);
 });
 afterEach(async () => {
   ui.unmount();

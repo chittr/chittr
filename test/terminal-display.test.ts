@@ -94,11 +94,11 @@ it('renders headers, bodies, deliveries, pins and notices from the projection in
   const lines = rows(view);
   expect(lines.map((row) => row.key)).toEqual([
     'm1:header',
-    'm1:text:0',
+    'm1:text:1:1:0',
     'm1:space',
     'n1:notice:0',
     'm2:header',
-    'm2:text:0',
+    'm2:text:1:1:0',
     'm2:delivery:0',
     'm2:space',
   ]);
@@ -197,4 +197,75 @@ it('wraps by width without mutating the fixture', () => {
   const narrow = rows(view, 20);
   expect(narrow.filter((row) => row.key.startsWith('m1:text:'))).toHaveLength(2);
   expect(view).toEqual(before);
+});
+
+it('formats human, agent and draft bodies while leaving notices and auxiliary text plain', () => {
+  const source =
+    '# Heading\n\n**bold** *italic* `code`\n\n- item\n\n> quote\n\n```ts\n  code line\n```\n\n| Key | Value |\n| --- | --- |\n| a | b |\n\n[label](https://example.com) ![alt](remote)';
+  const view = snapshot({
+    session: {
+      ...snapshot().session,
+      composerDraft: '**raw composer**',
+      messages: [
+        message('m1', 1, 'human', source),
+        message('m2', 2, 'codex', source, {
+          question: { prompt: '**raw question**', choices: ['*raw choice*'] },
+          attachments: [
+            {
+              id: 'att-' + 'a'.repeat(32),
+              filename: '**raw image**.png',
+              mediaType: 'image/png',
+              byteSize: 12,
+              width: 2,
+              height: 3,
+            },
+          ],
+          deliveries: { human: { status: 'contributed', rationale: '**raw delivery**' } },
+        }),
+      ],
+      notices: [{ id: 'n1', text: '**raw notice**', createdAt: '2026-09-19T10:00:03.000Z' }],
+    },
+    agents: [agent('codex', { draft: source })],
+    sessionAgentIds: ['codex'],
+  });
+  const before = structuredClone(view);
+  for (const width of [20, 80]) {
+    const lines = transcript(view, width);
+    const bodies = ['m1:text:', 'm2:text:', 'codex:draft:'].map((prefix) =>
+      lines.filter((row) => row.key.startsWith(prefix)).map((row) => cleanText(row.text)),
+    );
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(bodies[2]).toEqual(bodies[0]);
+    expect(bodies[0]!.join('\n')).toContain('  Heading');
+    expect(bodies[0]!.join('\n')).not.toContain('**bold**');
+    expect(text(view, width)).toContain('**raw notice**');
+    expect(text(view, width)).toContain('**raw question**');
+    expect(
+      lines
+        .filter((r) => r.key.includes(':delivery:'))
+        .map((r) => cleanText(r.text).slice(2))
+        .join(''),
+    ).toContain('**raw delivery**');
+    expect(
+      lines
+        .filter((r) => r.key.includes(':att-'))
+        .map((r) => cleanText(r.text).slice(2))
+        .join(''),
+    ).toContain('**raw image**');
+    expect(view).toEqual(before);
+  }
+});
+
+it('refreshes cached message layouts on text and width changes and owns its returned rows', () => {
+  const item = message('m1', 1, 'human', '**original**');
+  const view = snapshot({ session: { ...snapshot().session, messages: [item] } });
+  const rendered = transcript(view, 80).find((r) => r.key.startsWith('m1:text:'))!;
+  rendered.text = 'changed by a consumer';
+  rendered.source!.line = 999;
+  const fresh = transcript(view, 80).find((r) => r.key.startsWith('m1:text:'))!;
+  expect(cleanText(fresh.text)).toBe('  original');
+  expect(fresh.source!.line).toBe(1);
+  item.text = '**' + 'x'.repeat(30) + '**';
+  expect(text(view, 80)).toContain('  ' + 'x'.repeat(30));
+  expect(transcript(view, 20).filter((r) => r.key.startsWith('m1:text:'))).toHaveLength(2);
 });

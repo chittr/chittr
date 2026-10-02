@@ -19,7 +19,12 @@ own visible activity and queue.
 - **Named peers in one room.** Address agents with `@names` or invite the whole room. Agents
   answer with a contribution or a pass with its rationale. See [conversation](docs/usage.md#conversation).
 - **Terminal and browser.** Both interfaces use the same workspace, configuration and saved
-  sessions. See the [browser interface](docs/usage.md#browser-interface).
+  sessions. Terminal messages render Markdown headings, emphasis, lists, quotes, code and
+  tables. Selection copies rendered text, preserves paragraph newlines and sanitized code
+  indentation (tabs become four spaces), and joins visual wraps. Narrow tables use labelled
+  fields; unfinished syntax stays readable. Code has language labels but no syntax highlighting.
+  See [terminal keyboard and copying](docs/usage.md#terminal-keyboard) and the
+  [browser interface](docs/usage.md#browser-interface).
 - **Permissions you grant.** Edits, commands and task networking apply to the whole room and
   start disabled. Commands run sandboxed unless you opt into trusted commands. See
   [permissions](docs/configuration.md#permissions).

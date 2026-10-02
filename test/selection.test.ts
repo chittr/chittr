@@ -41,3 +41,17 @@ it('does not copy a click or blank cells and snapshots rows independently of liv
   rows[0]!.text = 'updated';
   expect(click.text()).toBe('riginal');
 });
+
+it('omits first-row Markdown padding without changing other row selection semantics', () => {
+  const row = { text: '  > alpha', contentStart: 2 };
+  expect(select([row], { x: 0, y: 0 }, { x: 8, y: 0 }).text()).toBe('  > alpha');
+  expect(select([{ ...row, trimStart: true }], { x: 0, y: 0 }, { x: 8, y: 0 }).text()).toBe(
+    '> alpha',
+  );
+  const wrapped = [
+    { text: '  > alpha', contentStart: 2, trimStart: true },
+    { text: '  > beta', contentStart: 4, continuation: true, trimStart: true },
+  ];
+  expect(select(wrapped, { x: 0, y: 0 }, { x: 7, y: 1 }).text()).toBe('> alphabeta');
+  expect(select(wrapped, { x: 0, y: 1 }, { x: 7, y: 1 }).text()).toBe('beta');
+});
