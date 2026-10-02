@@ -1,19 +1,27 @@
+/* Colours pair light and dark values; a saved data-theme choice overrides the system scheme. */
 :root {
+  color-scheme: light dark;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #292f2d;
-  background: #fafbf9;
+  color: var(--text);
+  background: var(--page);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --page: #fafbf9;
-  --panel: #fff;
-  --sidebar: #f0f2ee;
-  --line: #e1e6df;
-  --text: #292f2d;
-  --muted: #778078;
-  --accent: #25695a;
-  --soft-accent: #e7efe9;
-  --code: #f4f6f2;
-  --error: #9a3f30;
+  --page: light-dark(#fafbf9, #1b211e);
+  --panel: light-dark(#fff, #232b26);
+  --sidebar: light-dark(#f0f2ee, #171d19);
+  --line: light-dark(#e1e6df, #354039);
+  --text: light-dark(#292f2d, #e0e7de);
+  --muted: light-dark(#778078, #9aa89c);
+  --accent: light-dark(#25695a, #9bc7af);
+  --soft-accent: light-dark(#e7efe9, #2b3f32);
+  --code: light-dark(#f4f6f2, #1d251f);
+  --error: light-dark(#9a3f30, #edb296);
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 * {
   box-sizing: border-box;
@@ -87,6 +95,14 @@ a {
   width: 35px;
   height: 35px;
 }
+:root[data-theme='dark'] .brand img {
+  opacity: 0.9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .brand img {
+    opacity: 0.9;
+  }
+}
 .brand small {
   display: block;
   font-size: 10px;
@@ -147,7 +163,7 @@ a {
 }
 .nav-item.active {
   color: var(--accent);
-  background: #e2eae1;
+  background: light-dark(#e2eae1, #283a2d);
   font-weight: 600;
 }
 .count {
@@ -210,19 +226,19 @@ a {
   justify-content: center;
   flex: 0 0 auto;
   font-size: 22px;
-  background: #e4eee6;
-  color: #467556;
-  border: 1px solid #d7e4da;
+  background: light-dark(#e4eee6, #2e4634);
+  color: light-dark(#467556, #bed8b7);
+  border: 1px solid light-dark(#d7e4da, #3a5541);
 }
 .avatar.claude {
-  color: #ab6950;
-  background: #f3e9df;
-  border-color: #eadacf;
+  color: light-dark(#ab6950, #e4b797);
+  background: light-dark(#f3e9df, #47352a);
+  border-color: light-dark(#eadacf, #5a4537);
 }
 .avatar.human {
-  color: #536b82;
-  background: #e6ebf1;
-  border-color: #dbe2ea;
+  color: light-dark(#536b82, #bed0df);
+  background: light-dark(#e6ebf1, #2d3d4b);
+  border-color: light-dark(#dbe2ea, #3c4c5c);
   font-size: 13px;
   font-weight: 650;
 }
@@ -244,6 +260,29 @@ a {
 .sidebar-bottom {
   margin-top: auto;
   padding-top: 30px;
+}
+.theme-picker {
+  display: flex;
+  gap: 2px;
+  margin: 10px 12px 0;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.theme-picker button {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 11px;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.theme-picker button[aria-pressed='true'] {
+  background: var(--soft-accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 .local-note {
   display: flex;
@@ -729,7 +768,7 @@ h1 {
 .composer-box {
   max-width: 868px;
   margin: 0 auto;
-  border: 1px solid #ccd7cd;
+  border: 1px solid light-dark(#ccd7cd, #435847);
   border-radius: 11px;
   background: var(--panel);
   box-shadow: 0 3px 12px #2b4d3810;
@@ -826,7 +865,7 @@ textarea::placeholder {
 }
 .send-button {
   background: var(--accent);
-  color: #fff;
+  color: light-dark(#fff, #1b3325);
   border-color: var(--accent);
   font-size: 11px;
   padding: 7px 12px;
@@ -953,9 +992,9 @@ textarea::placeholder {
   font-size: 12px;
   line-height: 1.6;
   padding: 10px 13px;
-  border: 1px solid #e6c1ad;
+  border: 1px solid light-dark(#e6c1ad, #694632);
   border-radius: 7px;
-  background: #fff5eb;
+  background: light-dark(#fff5eb, #382b21);
   color: var(--error);
   margin: 0 auto 10px;
   max-width: 868px;
@@ -1124,62 +1163,12 @@ textarea::placeholder {
     padding: 6px;
   }
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page: #1b211e;
-    --panel: #232b26;
-    --sidebar: #171d19;
-    --line: #354039;
-    --text: #e0e7de;
-    --muted: #9aa89c;
-    --accent: #9bc7af;
-    --soft-accent: #2b3f32;
-    --code: #1d251f;
-    --error: #edb296;
-    color: var(--text);
-    background: var(--page);
-  }
-  .nav-item.active {
-    background: #283a2d;
-  }
-  .avatar {
-    background: #2e4634;
-    border-color: #3a5541;
-    color: #bed8b7;
-  }
-  .avatar.claude {
-    background: #47352a;
-    border-color: #5a4537;
-    color: #e4b797;
-  }
-  .avatar.human {
-    background: #2d3d4b;
-    border-color: #3c4c5c;
-    color: #bed0df;
-  }
-  .composer-box {
-    border-color: #435847;
-  }
-  .send-button {
-    background: #9bc7af;
-    color: #1b3325;
-  }
-  .error-banner,
-  .pending-banner,
-  .limit-notice {
-    background: #382b21;
-    border-color: #694632;
-  }
-  .brand img {
-    opacity: 0.9;
-  }
-}
 /* These paired colours also define selected and keyboard-focus contrast. */
 .question-card {
-  --question-bg: #f5f7f2;
-  --question-text: #243328;
-  --question-control: #536b57;
-  --question-selected: #d5e6d4;
+  --question-bg: light-dark(#f5f7f2, #202d24);
+  --question-text: light-dark(#243328, #edf3e9);
+  --question-control: light-dark(#536b57, #abc7ad);
+  --question-selected: light-dark(#d5e6d4, #3b5140);
   margin-top: 16px;
   padding: 14px;
   border: 1px solid var(--question-control);
@@ -1250,14 +1239,6 @@ textarea::placeholder {
   padding-top: 12px;
   margin-top: 12px;
 }
-@media (prefers-color-scheme: dark) {
-  .question-card {
-    --question-bg: #202d24;
-    --question-text: #edf3e9;
-    --question-control: #abc7ad;
-    --question-selected: #3b5140;
-  }
-}
 
 .message-images,
 .draft-images {
@@ -1272,8 +1253,8 @@ textarea::placeholder {
   padding: 9px 11px;
   border: 1px solid #d8b985;
   border-radius: 7px;
-  background: #fff8e8;
-  color: #664b20;
+  background: light-dark(#fff8e8, #342b1c);
+  color: light-dark(#664b20, #f1d7a6);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -1285,12 +1266,6 @@ textarea::placeholder {
   margin: 3px 0 0 18px;
   padding: 0;
   overflow-wrap: anywhere;
-}
-@media (prefers-color-scheme: dark) {
-  .image-status-warning {
-    background: #342b1c;
-    color: #f1d7a6;
-  }
 }
 .image-tile {
   flex: 0 0 156px;

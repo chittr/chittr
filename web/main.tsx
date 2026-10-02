@@ -18,6 +18,7 @@ import { maintenanceLabel } from '../src/participant-status.js';
 import { unansweredQuestions } from '../src/questions.js';
 import { pinnedMessages as pinnedMessageList, questionSession, timeline } from '../src/snapshot.js';
 import { Dialog } from './dialog';
+import { currentTheme, saveTheme, themeChoices } from './theme';
 import type { CommandResult, WebState } from '../src/web-types.js';
 import { contextPercent, formatContextUsage } from '../src/context-usage.js';
 import { formatReplyDraft, parseReplyDraft } from '../src/reply.js';
@@ -54,6 +55,7 @@ function App() {
   const [viewing, setViewing] = useState<AttachmentMetadata>();
   const fileInput = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<WebState>();
+  const [theme, setTheme] = useState(currentTheme);
   const [connection, setConnection] = useState<'connecting' | 'live' | 'reconnecting' | 'closed'>(
     'connecting',
   );
@@ -476,6 +478,20 @@ function App() {
           <button className="nav-item" disabled={disabled} onClick={() => openPanel('config')}>
             ⚙ <span>Room configuration</span>
           </button>
+          <div className="theme-picker" role="group" aria-label="Theme">
+            {themeChoices.map((choice) => (
+              <button
+                key={choice}
+                aria-pressed={theme === choice}
+                onClick={() => {
+                  saveTheme(choice);
+                  setTheme(choice);
+                }}
+              >
+                {choice[0]!.toUpperCase() + choice.slice(1)}
+              </button>
+            ))}
+          </div>
           <div className="local-note">
             <span className="presence" /> Running on your machine
           </div>
