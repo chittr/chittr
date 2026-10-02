@@ -150,6 +150,7 @@ it.each([
 
 it.each([
   { metadataRaw: '{oops' },
+  { metadataRaw: '' },
   { metadata: null },
   { metadata: [] },
   { metadata: {} },
@@ -172,6 +173,8 @@ it.each([
   if (!options.rootError && !options.npmRoot)
     expect(result.stderr).not.toContain('Use the installation method that owns this copy');
   if (options.viewError) expect(result.stderr).toContain('registry offline diagnostic');
+  if (options.metadataRaw !== undefined)
+    expect(result.stderr).toContain('npm view @chittr/cli@latest returned unreadable metadata');
 });
 
 it.each([{}, { npm: '>=11' }])('adds no Node constraint for engines %j', (engines) => {

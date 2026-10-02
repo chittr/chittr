@@ -124,9 +124,15 @@ export async function updateInstallation(entrypoint: URL): Promise<void> {
       );
 
     phase = 'metadata';
-    const response: unknown = JSON.parse(
-      await query(['view', `${packageName}@latest`, 'version', 'engines', '--json']),
-    );
+    const output = await query(['view', `${packageName}@latest`, 'version', 'engines', '--json']);
+    let response: unknown;
+    try {
+      response = JSON.parse(output);
+    } catch (error) {
+      throw new Error(
+        `npm view ${packageName}@latest returned unreadable metadata: ${errorText(error)}`,
+      );
+    }
     // npm unwraps a single returned field when the package has no engines field.
     const metadata = typeof response === 'string' ? { version: response } : response;
     if (!object(metadata) || !validVersion(metadata.version))
