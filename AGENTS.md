@@ -11,11 +11,8 @@ and dependency boundaries. For a maintenance task, use the matching guide:
 This file is contributor navigation. The Codex adapter also reads applicable
 root and ancestor AGENTS files as workspace instructions. The `.agents/` directory
 holds project configuration, instruction files and skill bundles. Project
-configuration and instruction files are personal to a checkout and stay untracked;
-the only bundle tracked here is `.agents/skills/deploy-website/`, which is Bill's
-maintainer deployment documentation rather than a contributor step.
-`.claude/skills/` is Claude's discovery path; this checkout links its website
-skill to the bundle in `.agents/skills/`. See [configure Chittr](docs/configuration.md#skills)
+configuration and instruction files are personal to a checkout and stay untracked.
+See [configure Chittr](docs/configuration.md#skills)
 for provider discovery paths.
 
 For the contribution process itself — the pull request loop, the credential-free

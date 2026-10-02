@@ -35,17 +35,17 @@ browser check, `CHITTR_BROWSER` can name an installed browser executable. Record
 which browser you used. Native macOS probes need an environment that permits
 child sandboxes; an outer sandbox denial is not a passing result.
 
-| Command                          | Coverage                                                       |
-| -------------------------------- | -------------------------------------------------------------- |
-| `npm run check`                  | Server and browser source types                                |
-| `npm run build`                  | Server, workers and browser assets                             |
-| `npm run check:tests`            | TypeScript test sources and helpers                            |
-| `npm test`                       | Deterministic Vitest suite                                     |
-| `npm run format:check`           | Prettier-supported files outside Git-ignored paths             |
-| `npm run test:web`               | Browser UI with deterministic peers                            |
-| `npm run test:terminal`          | Terminal input/display through a Python PTY                    |
-| `npm run test:resume`            | CLI startup/history/resume with providers disabled             |
-| `npm run test:security`          | Native macOS file, command, network, skill and MCP enforcement |
+| Command                 | Coverage                                                       |
+| ----------------------- | -------------------------------------------------------------- |
+| `npm run check`         | Server and browser source types                                |
+| `npm run build`         | Server, workers and browser assets                             |
+| `npm run check:tests`   | TypeScript test sources and helpers                            |
+| `npm test`              | Deterministic Vitest suite                                     |
+| `npm run format:check`  | Prettier-supported files outside Git-ignored paths             |
+| `npm run test:web`      | Browser UI with deterministic peers                            |
+| `npm run test:terminal` | Terminal input/display through a Python PTY                    |
+| `npm run test:resume`   | CLI startup/history/resume with providers disabled             |
+| `npm run test:security` | Native macOS file, command, network, skill and MCP enforcement |
 
 `npm run quality` runs these in the order shown and stops at the first failure.
 Build before typechecking or running tests that import or launch `dist/` workers.

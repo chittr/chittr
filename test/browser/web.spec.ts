@@ -1555,8 +1555,8 @@ test('images: real host restart restores accepted references and unknown send wi
   await page.getByRole('button', { name: 'View image restart-red.png' }).click();
   await expect(page.getByRole('dialog')).toContainText('Image unavailable');
   await page.unroute('**/api/command');
-  await page.goto(next.url);
-  await page.reload();
+  // Accepting a new launch token triggers the app's hashchange reload.
+  await Promise.all([page.waitForEvent('load'), page.goto(next.url)]);
   await page.getByRole('button', { name: 'Check last action' }).click();
   await expect(messageInput(page)).toHaveValue('');
   const restored = await state(page);
@@ -1575,8 +1575,7 @@ test('images: real host restart restores accepted references and unknown send wi
     for (const key of Object.keys(sessionStorage))
       if (key !== 'chittr:token') sessionStorage.removeItem(key);
   });
-  await page.goto(second.url);
-  await page.reload();
+  await Promise.all([page.waitForEvent('load'), page.goto(second.url)]);
   await loadedImages(page);
   await expect(messageInput(page)).toHaveValue('Persistent draft');
   expect((await state(page)).session.composerAttachments).toEqual(staged);

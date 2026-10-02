@@ -98,7 +98,7 @@ describe('community and governance documents', () => {
     };
     expect(config.blank_issues_enabled).toBe(false);
     const urls = (config.contact_links ?? []).map((link) => link.url);
-    expect(urls).toContain('https://github.com/mcgloneb/ai-chat/security/advisories/new');
+    expect(urls).toContain('https://github.com/chittr/chittr/security/advisories/new');
   });
 });
 
@@ -113,9 +113,5 @@ describe('contributor-usable maintenance instructions', () => {
   it('keeps personal project configuration out of the tracked tree', () => {
     expect(read('.gitignore')).toContain('.agents/chittr/');
     expect(existsSync(join(root, '.agents/ai-chat/human-chair-room.md'))).toBe(false);
-    // The retained deployment bundle is maintainer documentation, not a contributor step.
-    expect(read('.agents/skills/deploy-website/SKILL.md')).toContain(
-      'Maintainer deployment documentation',
-    );
   });
 });
