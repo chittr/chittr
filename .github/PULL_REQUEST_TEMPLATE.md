@@ -1,39 +1,13 @@
-## What this changes
+## Why
 
-<!-- What behaviour is different after this merges, and why. Link the issue: Fixes #123 -->
+<!-- Explain the problem. Link the issue or name the local ticket, unless this is a small self-evident fix. -->
 
-## How it was verified
+## What changed
 
-<!--
-  Paste the result of the checks you ran. `npm run quality` needs no provider login and
-  no paid subscription allowance — see CONTRIBUTING.md. If you ran a focused test
-  instead of the whole suite, say which and why.
--->
+<!-- Describe the changed behavior and relevant details. Note which affected documents you updated, or say none. -->
 
-```
-npm run quality
-```
+## Testing
 
-## Documentation
+<!-- Report the affected checks you ran and their results or output. Explain skipped or unavailable checks. Focused checks are fine; full `npm run quality` is optional. -->
 
-<!--
-  Which documents this change makes wrong, and where you updated them. "None" is a valid
-  answer when nothing documented changes.
--->
-
-## Agent assistance
-
-<!--
-  Did a CLI coding agent help write this? Say which one. Disclosure only — it is not a
-  penalty. If an agent authored commits, keep that authorship rather than rewriting it.
--->
-
-## Checklist
-
-- [ ] I opened or linked an issue first, the work is tracked in the maintainer's ticket store and named above, or this is a small self-evident fix.
-- [ ] `npm run quality` passes on a supported host, or I have said which check fails and why.
-- [ ] Tests cover the behaviour at the boundary this change touches, or I have said why not.
-- [ ] Documentation that this change makes wrong is updated here.
-- [ ] No provider login, paid subscription allowance or maintainer tooling is needed to verify this.
-- [ ] This contribution is offered under the project's MIT terms, inbound equals outbound.
-- [ ] This is not a security fix for an unreported vulnerability (those go through SECURITY.md first).
+Agent assistance: <!-- Name any coding agents that helped, or say none. -->
