@@ -88,8 +88,7 @@ Some checks are **not** part of this loop and are not expected from contributors
 `test:compaction` scripts drive real provider CLIs and consume subscription allowance.
 They need separate authorization, and they are not run on pull requests. Do not add a
 change whose only verification is one of those scripts without saying so in the pull
-request. The deployment instructions under `.agents/skills/` are Bill's maintainer
-documentation and are not a contributor step.
+request.
 
 ## Agent-assisted contributions
 
@@ -136,12 +135,12 @@ provider-support wording that is not backed by an observed run.
 
 ## Reporting things
 
-| What you have                         | Where it goes                                                                    |
-| ------------------------------------- | -------------------------------------------------------------------------------- |
+| What you have                         | Where it goes                                                                 |
+| ------------------------------------- | ----------------------------------------------------------------------------- |
 | A bug in the software                 | A public [issue](https://github.com/chittr/chittr/issues), using the bug form |
-| A security vulnerability              | Privately — see [SECURITY.md](SECURITY.md). Never a public issue                 |
-| A question or help request            | [SUPPORT.md](SUPPORT.md)                                                         |
-| Behaviour by a person in this project | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)                                         |
+| A security vulnerability              | Privately — see [SECURITY.md](SECURITY.md). Never a public issue              |
+| A question or help request            | [SUPPORT.md](SUPPORT.md)                                                      |
+| Behaviour by a person in this project | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)                                      |
 
 Support requests and conduct reports are different channels with different handling.
 Please do not route one through the other.
