@@ -8,7 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { installWithNpm } from '../src/update.js';
 import { updateFixture } from './update-fixture.js';
 
@@ -90,21 +90,32 @@ it.each([
   'other prefix',
   'source',
   'local',
+  'npx',
   'name',
   'version',
   'missing destination',
 ])('rejects %s before installation', (kind) => {
   const f = fixture();
+  let launchEntry = f.entry;
   if (kind === 'missing npm') rmSync(f.npm);
   if (kind === 'linked package') {
     const linked = join(f.dir, 'linked');
     renameSync(f.root, linked);
     symlinkSync(linked, f.root);
   }
-  if (kind === 'other prefix' || kind === 'local') {
+  if (kind === 'other prefix') {
     const otherRoot = join(f.dir, 'other modules');
     mkdirSync(join(otherRoot, '@chittr/cli'), { recursive: true });
     f.configure({ npmRoot: otherRoot });
+  }
+  if (kind === 'local' || kind === 'npx') {
+    const localRoot = join(
+      kind === 'local' ? f.workspace : join(f.home, '.npm/_npx/fixture'),
+      'node_modules/@chittr/cli',
+    );
+    mkdirSync(dirname(localRoot), { recursive: true });
+    renameSync(f.root, localRoot);
+    launchEntry = join(localRoot, 'dist/cli.js');
   }
   if (kind === 'source') {
     // import.meta.url now points into src, even though invoked through dist/cli.js.
@@ -122,10 +133,19 @@ it.each([
       }),
     );
   if (kind === 'missing destination') f.configure({ npmRoot: join(f.dir, 'absent') });
-  const result = f.run();
+  const result = f.run([], launchEntry);
   failed(result);
   noInstall(f);
   if (kind === 'other prefix') expect(result.stderr).toContain('prefixes do not match');
+  expect(result.stderr).toContain('Installation was not started; no package files were changed.');
+  expect(result.stderr).toContain('Use the installation method that owns this copy');
+  if (kind === 'local' || kind === 'npx' || kind === 'missing destination') {
+    expect(result.stderr).toContain(`This Chittr runs from ${dirname(dirname(launchEntry))}`);
+    expect(result.stderr).toContain('npm on PATH has no verifiable global @chittr/cli at');
+    expect(result.stderr).toContain(
+      kind === 'missing destination' ? join(f.dir, 'absent/@chittr/cli') : f.root,
+    );
+  }
 });
 
 it.each([
@@ -148,15 +168,59 @@ it.each([
   failed(result);
   noInstall(f);
   expect(result.stdout).not.toContain('Updating Chittr');
+  expect(result.stderr).toContain('Installation was not started; no package files were changed.');
+  if (!options.rootError && !options.npmRoot)
+    expect(result.stderr).not.toContain('Use the installation method that owns this copy');
   if (options.viewError) expect(result.stderr).toContain('registry offline diagnostic');
+});
+
+it.each([{}, { npm: '>=11' }])('adds no Node constraint for engines %j', (engines) => {
+  const f = fixture({ metadata: { version: '1.1.0', engines } });
+  const result = f.run();
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('Updated Chittr to 1.1.0');
+});
+
+it('uses npm engine-range semantics for a prerelease Node runtime', () => {
+  const f = fixture({ nodeVersion: '25.0.0-rc.1' });
+  const result = f.run();
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('Updated Chittr to 1.1.0');
 });
 
 it.each(['missing', 'directory', 'malformed', 'name', 'version', 'unreadable'])(
   'does not report success with a %s post-install manifest',
   (after) => {
     const f = fixture({ after });
-    failed(f.run());
+    const result = f.run();
+    failed(result);
+    expect(result.stderr).toContain('npm may have changed package files');
+    expect(result.stderr).not.toContain('Use the installation method that owns this copy');
     expect(f.calls().at(-1)?.args[0]).toBe('install');
+  },
+);
+
+it.each(['SIGINT', 'SIGTERM', 'SIGHUP'] as const)(
+  'cancels metadata lookup on %s without installing',
+  async (signal) => {
+    const f = fixture({ holdView: true });
+    const run = f.start();
+    try {
+      await vi.waitFor(() => expect(existsSync(f.ready)).toBe(true));
+      const pid = Number(readFileSync(f.ready, 'utf8'));
+      run.child.kill(signal);
+      expect(await run.done).toBe(1);
+      expect(() => process.kill(pid, 0)).toThrow();
+      noInstall(f);
+      expect(run.output().stderr).toContain(
+        'Installation was not started; no package files were changed.',
+      );
+      expect(run.output().stderr).not.toContain('Use the installation method that owns this copy');
+      expect(run.output().stdout).not.toContain('Updating Chittr');
+    } finally {
+      run.child.kill('SIGTERM');
+      await run.done;
+    }
   },
 );
 

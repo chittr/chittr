@@ -80,6 +80,7 @@ export function installWithNpm(
 
 /** Standalone package maintenance: no configuration, storage or room dependencies. */
 export async function updateInstallation(entrypoint: URL): Promise<void> {
+  let phase: 'identity' | 'metadata' | 'install' = 'identity';
   const controller = new AbortController();
   const handlers = signals.map((signal) => {
     const handler = () => controller.abort(signal);
@@ -105,7 +106,15 @@ export async function updateInstallation(entrypoint: URL): Promise<void> {
     const npmRoot = await query(['root']);
     if (!isAbsolute(npmRoot)) throw new Error(`npm returned an invalid global root: ${npmRoot}`);
     const destination = join(npmRoot, '@chittr', 'cli');
-    if (lstatSync(destination).isSymbolicLink())
+    let packageEntry;
+    try {
+      packageEntry = lstatSync(destination);
+    } catch (error) {
+      throw new Error(
+        `This Chittr runs from ${root}, but npm on PATH has no verifiable global ${packageName} at ${destination}: ${errorText(error)}`,
+      );
+    }
+    if (packageEntry.isSymbolicLink())
       throw new Error(
         `The global package at ${destination} is linked. Linked packages cannot self-update.`,
       );
@@ -114,9 +123,12 @@ export async function updateInstallation(entrypoint: URL): Promise<void> {
         `This Chittr runs from ${root}, but PATH npm installs at ${destination}. The prefixes do not match.`,
       );
 
-    const metadata: unknown = JSON.parse(
+    phase = 'metadata';
+    const response: unknown = JSON.parse(
       await query(['view', `${packageName}@latest`, 'version', 'engines', '--json']),
     );
+    // npm unwraps a single returned field when the package has no engines field.
+    const metadata = typeof response === 'string' ? { version: response } : response;
     if (!object(metadata) || !validVersion(metadata.version))
       throw new Error('npm returned invalid latest-version metadata.');
     const target = metadata.version;
@@ -139,7 +151,10 @@ export async function updateInstallation(entrypoint: URL): Promise<void> {
       );
       return;
     }
-    if (typeof nodeRange === 'string' && !semver.satisfies(process.versions.node, nodeRange))
+    if (
+      typeof nodeRange === 'string' &&
+      !semver.satisfies(process.versions.node, nodeRange, { includePrerelease: true })
+    )
       throw new Error(
         `Chittr ${target} requires Node ${nodeRange}; running Node ${process.versions.node}. Update Node before retrying.`,
       );
@@ -148,6 +163,7 @@ export async function updateInstallation(entrypoint: URL): Promise<void> {
       `Updating Chittr ${running} to ${target} at ${destination}.\n` +
         `Close all other Chittr rooms and make the complete backup before installation.\n${guide}#back-up-and-restore\n`,
     );
+    phase = 'install';
     await installWithNpm(npm, ['install', '--global', `${packageName}@${target}`], context);
     // Every import above is loaded before npm can replace this package. Read disk anew.
     if (lstatSync(destination).isSymbolicLink() || realpathSync(destination) !== root)
@@ -161,8 +177,12 @@ export async function updateInstallation(entrypoint: URL): Promise<void> {
   } catch (error) {
     throw new Error(
       `Chittr update failed: ${errorText(error)}\n` +
-        `Use the installation method that owns this copy; source, local/npx, linked and other-manager installations need their own update method.\n` +
-        `No alternate npm prefix was selected. A failed installation may have changed package files.\n` +
+        (phase === 'identity'
+          ? `Use the installation method that owns this copy; source, local/npx, linked and other-manager installations need their own update method.\n`
+          : '') +
+        (phase === 'install'
+          ? `npm may have changed package files; the previous package was not restored automatically.\n`
+          : `Installation was not started; no package files were changed.\n`) +
         `Reinstall: ${guide}#reinstall-or-uninstall\nBackup and restore: ${guide}#back-up-and-restore`,
     );
   } finally {

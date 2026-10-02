@@ -63,6 +63,7 @@ export function updateFixture(options: Record<string, unknown> = {}, builtCli = 
     writeFileSync(
       entry,
       `import { updateInstallation } from ${JSON.stringify(new URL('../dist/update.js', import.meta.url).href)};
+${options.nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(options.nodeVersion)} });` : ''}
 updateInstallation(new URL(import.meta.url)).catch(e => { console.error(e.message); process.exitCode = 1; });\n`,
     );
   }
@@ -81,7 +82,10 @@ if (args[0] === 'root') {
   if (s.rootError) { console.error('root query failed'); process.exitCode = 2; }
 } else if (args[0] === 'view') {
   if (s.viewError) { console.error('registry offline diagnostic'); process.exit(3); }
-  console.log(s.metadataRaw === undefined ? JSON.stringify(s.metadata) : s.metadataRaw);
+  // npm view unwraps the sole returned field when engines is absent.
+  const metadata = s.metadata && typeof s.metadata === 'object' && Object.keys(s.metadata).length === 1 && 'version' in s.metadata ? s.metadata.version : s.metadata;
+  console.log(s.metadataRaw === undefined ? JSON.stringify(metadata) : s.metadataRaw);
+  if (s.holdView) { fs.writeFileSync(s.ready, String(process.pid)); setInterval(() => {}, 1000); }
   if (s.removeNpm) fs.unlinkSync(process.argv[1]);
   // Move latest after lookup; the installer must still receive the old exact version.
   if (s.moveTag) { s.metadata.version = '9.9.9'; fs.writeFileSync(scenarioPath, JSON.stringify(s)); }
