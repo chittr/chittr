@@ -66,6 +66,7 @@ function markdownLines(
     key: `${owner}:${row.source.block}:${row.source.line}:${i}`,
     source: { ...row.source, owner },
     contentStart: 2 + (row.contentStart ?? 0),
+    padding: row.padding?.map(({ start, end }) => ({ start: start + 2, end: end + 2 })),
     text: `  ${row.text}`,
   }));
 }

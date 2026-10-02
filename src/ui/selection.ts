@@ -9,6 +9,8 @@ export interface CopyRow {
   contentStart?: number;
   /** Markdown body/draft rows omit padding even when the selection starts there. */
   trimStart?: boolean;
+  /** Additional display-only cell spans inside a Markdown prefix, excluding visible markers. */
+  padding?: { start: number; end: number }[];
 }
 export interface Cell {
   x: number;
@@ -43,7 +45,11 @@ export class TextSelection {
     rows: CopyRow[],
     readonly start: Cell,
   ) {
-    this.rows = rows.map((row) => ({ ...row, text: stripAnsi(row.text) }));
+    this.rows = rows.map((row) => ({
+      ...row,
+      text: stripAnsi(row.text),
+      padding: row.padding?.map((padding) => ({ ...padding })),
+    }));
     this.end = start;
   }
   get moved(): boolean {
@@ -71,7 +77,13 @@ export class TextSelection {
           : Math.max(bounds[0], row.contentStart ?? 0);
       const [start, end] = span(row.text, left, bounds[1]);
       if (previous !== undefined && !joins) result += '\n';
-      result += row.text.slice(start, end);
+      let cursor = start;
+      for (const padding of row.padding ?? []) {
+        const [from, to] = span(row.text, padding.start, padding.end);
+        result += row.text.slice(cursor, Math.max(cursor, Math.min(end, from)));
+        cursor = Math.max(cursor, Math.min(end, to));
+      }
+      result += row.text.slice(cursor, end);
       previous = y;
     }
     return result;

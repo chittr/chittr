@@ -55,3 +55,18 @@ it('omits first-row Markdown padding without changing other row selection semant
   expect(select(wrapped, { x: 0, y: 0 }, { x: 7, y: 1 }).text()).toBe('> alphabeta');
   expect(select(wrapped, { x: 0, y: 1 }, { x: 7, y: 1 }).text()).toBe('beta');
 });
+
+it('omits internal Markdown list padding while retaining a selected quote marker and freezes metadata', () => {
+  const row = {
+    text: '  >     code',
+    contentStart: 2,
+    trimStart: true,
+    padding: [{ start: 4, end: 8 }],
+  };
+  expect(select([row], { x: 0, y: 0 }, { x: 11, y: 0 }).text()).toBe('> code');
+  expect(select([row], { x: 5, y: 0 }, { x: 11, y: 0 }).text()).toBe('code');
+  expect(select([row], { x: 4, y: 0 }, { x: 6, y: 0 }).text()).toBe('');
+  const held = select([row], { x: 0, y: 0 }, { x: 11, y: 0 });
+  row.padding[0]!.end = 12;
+  expect(held.text()).toBe('> code');
+});

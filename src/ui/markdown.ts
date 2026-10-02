@@ -22,12 +22,22 @@ const strong = '\x1b[1m',
   emphasis = '\x1b[3m',
   code = '\x1b[36m';
 const displayText = (text: string) => cleanText(text).replace(/[\x80-\x9f]/g, '');
+/** List alignment spaces are display padding; retain marker separator spaces. */
+function prefixPadding(prefix: string): CopyRow['padding'] {
+  return [...prefix.matchAll(/ +/g)].flatMap((match) => {
+    const start = match.index + (match.index ? 1 : 0);
+    const end = match.index + match[0].length;
+    return start < end ? [{ start, end }] : [];
+  });
+}
 
 /** Layout trusted styled text without re-sanitizing it or splitting a grapheme. */
 function wrap(runs: Run[], width: number, first = '', rest = first): CopyRow[] {
   // Character references can decode into controls during parsing. Clean those
   // values too, before combining them with application-owned styles.
-  runs = runs.map((run) => ({ ...run, text: displayText(run.text) }));
+  // emit() splits logical lines first. A remaining LF is a decoded table-cell
+  // reference, which must stay inside a single physical terminal row.
+  runs = runs.map((run) => ({ ...run, text: displayText(run.text).replaceAll('\n', ' ') }));
   const text = runs.map((run) => run.text).join('');
   const rows: CopyRow[] = [];
   let runIndex = 0,
@@ -41,6 +51,7 @@ function wrap(runs: Run[], width: number, first = '', rest = first): CopyRow[] {
       text: prefix + body + (body.includes('\x1b[') ? reset : ''),
       continuation: rows.length > 0,
       contentStart: rows.length ? stringWidth(prefix) : 0,
+      padding: prefixPadding(prefix),
     });
     prefix = rest;
     cells = stringWidth(prefix);
@@ -70,9 +81,12 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
   const width = Math.max(2, available);
   const tree = parser.parse(source);
   const definitions = new Map<string, Definition>();
+  const references = new Set<string>();
   const collect = (node: Nodes): void => {
     if (node.type === 'definition' && !definitions.has(node.identifier))
       definitions.set(node.identifier, node);
+    if (node.type === 'linkReference' || node.type === 'imageReference')
+      references.add(node.identifier);
     if ('children' in node) node.children.forEach(collect);
   };
   collect(tree);
@@ -168,6 +182,7 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
         if (index)
           rows.push({
             text: prefixFit(prefix),
+            padding: prefixPadding(prefixFit(prefix)),
             source: { block, line: node.children[index]!.position!.start.line },
             trimStart: true,
           });
@@ -187,7 +202,12 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
       return;
     }
     const desired = Array.from({ length: columns }, (_, column) =>
-      Math.max(2, ...data.map((row) => stringWidth(row[column]!.map((r) => r.text).join('')))),
+      Math.max(
+        2,
+        ...data.map((row) =>
+          stringWidth(row[column]!.map((r) => r.text.replaceAll('\n', ' ')).join('')),
+        ),
+      ),
     );
     const budget = room - columns * 3 - 1;
     const sizes = Array.from({ length: columns }, () => 2);
@@ -202,9 +222,15 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
     const border =
       prefixFit(prefix) + '+' + sizes.map((size) => '-'.repeat(size + 2)).join('+') + '+';
     const borderRow = (line: number) =>
-      rows.push({ text: border, trimStart: true, source: { block, line } });
+      rows.push({
+        text: border,
+        padding: prefixPadding(prefixFit(prefix)),
+        trimStart: true,
+        source: { block, line },
+      });
     rows.push({
       text: prefixFit(first) + border.slice(prefixFit(prefix).length),
+      padding: prefixPadding(prefixFit(first)),
       trimStart: true,
       source: { block, line: block },
     });
@@ -223,6 +249,7 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
         });
         rows.push({
           text: prefixFit(prefix) + '|' + values.join('|') + '|',
+          padding: prefixPadding(prefixFit(prefix)),
           trimStart: true,
           source: { block, line },
         });
@@ -241,7 +268,12 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
       const start = node.position?.start.line ?? 1;
       const block = parentBlock ?? start;
       if (previous && start > (previous.position?.end.line ?? start) + 1)
-        rows.push({ text: prefixFit(prefix), source: { block, line: start - 1 }, trimStart: true });
+        rows.push({
+          text: prefixFit(prefix),
+          padding: prefixPadding(prefixFit(prefix)),
+          source: { block, line: start - 1 },
+          trimStart: true,
+        });
       const first = previous ? prefix : firstPrefix;
       switch (node.type) {
         case 'paragraph':
@@ -254,23 +286,32 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
           );
           break;
         case 'blockquote':
-          blocks(node.children, prefix + '> ', first + '> ', block);
+          if (node.children.length) blocks(node.children, prefix + '> ', first + '> ', block);
+          else emit([{ text: '', style: '', line: start }], block, first + '> ', prefix + '> ');
           break;
         case 'list':
           node.children.forEach((item, i) => {
             const marker = node.ordered ? `${(node.start ?? 1) + i}. ` : '• ';
             const check = item.checked == null ? '' : item.checked ? '[x] ' : '[ ] ';
-            blocks(
-              item.children,
-              prefix + ' '.repeat(marker.length + check.length),
-              (i ? prefix : first) + marker + check,
-              parentBlock ?? item.position?.start.line,
-            );
+            if (!item.children.length)
+              emit(
+                [{ text: '', style: '', line: item.position?.start.line ?? start }],
+                parentBlock ?? item.position?.start.line ?? start,
+                (i ? prefix : first) + marker + check,
+                prefix,
+              );
+            else
+              blocks(
+                item.children,
+                prefix + ' '.repeat(marker.length + check.length),
+                (i ? prefix : first) + marker + check,
+                parentBlock ?? item.position?.start.line,
+              );
           });
           break;
         case 'code': {
-          if (node.lang)
-            emit([{ text: node.lang, style: '\x1b[90m', line: start }], block, first, prefix);
+          const label = [node.lang, node.meta].filter(Boolean).join(' ');
+          if (label) emit([{ text: label, style: '\x1b[90m', line: start }], block, first, prefix);
           const fenced = /^\s*(?:`{3,}|~{3,})/.test(raw(node));
           emit(
             node.value.split('\n').flatMap((text, i) => [
@@ -281,7 +322,7 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
               },
             ]),
             block,
-            node.lang ? prefix : first,
+            label ? prefix : first,
             prefix,
           );
           break;
@@ -304,6 +345,8 @@ export function markdownRows(source: string, available: number): MarkdownRow[] {
           );
           break;
         case 'definition':
+          if (!references.has(node.identifier))
+            emit([{ text: raw(node), style: '', line: start }], block, first, prefix);
           break;
         default:
           emit([{ text: raw(node), style: '', line: start }], block, first, prefix);

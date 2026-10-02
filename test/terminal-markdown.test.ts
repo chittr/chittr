@@ -11,6 +11,7 @@ function copy(source: string, width = 78) {
     ...row,
     text: '  ' + row.text,
     contentStart: 2 + (row.contentStart ?? 0),
+    padding: row.padding?.map(({ start, end }) => ({ start: start + 2, end: end + 2 })),
   }));
   const selection = new TextSelection(rows, { x: 0, y: 0 });
   selection.end = { x: width + 2, y: rows.length - 1 };
@@ -134,3 +135,42 @@ it('maps code lines and table rows to the same source coordinates after a closin
     )!.source,
   ).toEqual(row.source);
 });
+
+it.each([18, 78])(
+  'keeps decoded table-cell LF, CR and tab references inside physical rows at %s cells',
+  (width) => {
+    const source = '| A | B |\n| - | - |\n| x&#10;y | z&#xA;q |\n| x&#13;y | z&#9;q |';
+    const rows = markdownRows(source, width);
+    for (const row of rows) {
+      expect(row.text).not.toMatch(/[\n\r\t]/);
+      expect(stringWidth(row.text)).toBeLessThanOrEqual(width);
+    }
+    const value = copy(source, width);
+    expect(value).toContain('x y');
+    expect(value).toContain('z q');
+    expect(value).toContain('xy');
+    expect(value).toContain('z    q');
+  },
+);
+
+it('retains empty list and quote markers, unreferenced definitions and fence metadata', () => {
+  expect(plain('- \n- b')).toEqual(['• ', '• b']);
+  expect(plain('1. first\n2. ')).toEqual(['1. first', '2. ']);
+  expect(plain('>')).toEqual(['> ']);
+  expect(copy('[docs]: https://example.com')).toBe('[docs]: https://example.com');
+  expect(copy('```ts title=app.ts\na\n```')).toBe('ts title=app.ts\na');
+  expect(copy('[ref][docs]\n\n[docs]: https://example.com')).toBe('ref (https://example.com)\n');
+});
+
+it.each([8, 78])(
+  'omits list alignment padding from blank, prose and code logical lines at %s cells',
+  (width) => {
+    expect(copy('- item\n\n  ```\n  a\n    b\n  ```', width)).toBe('• item\n\na\n  b');
+    expect(copy('- first\n  next\n  - nested\n    more', width)).toBe(
+      '• first\nnext\n• nested\nmore',
+    );
+    expect(copy('> - item\n>\n>   ```\n>   a\n>     b\n>   ```', width)).toBe(
+      '> • item\n> \n> a\n>   b',
+    );
+  },
+);
