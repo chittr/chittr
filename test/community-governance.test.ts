@@ -11,6 +11,7 @@ const community = ['CONTRIBUTING.md', 'SECURITY.md', 'SUPPORT.md', 'CODE_OF_COND
 const linked = [
   ...community,
   'README.md',
+  'CHANGELOG.md',
   'AGENTS.md',
   '.github/PULL_REQUEST_TEMPLATE.md',
   'docs/configuration.md',
