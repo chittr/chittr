@@ -10,8 +10,13 @@ depending on this project.
 
 Most questions are already answered:
 
-- [README](README.md) — what it is, how to run it in the terminal and the browser, and
-  which provider CLIs and versions were exercised.
+- [README](README.md) — what it is, how to install it and start it in the terminal and the
+  browser, and where each guide lives.
+- [Install and recover Chittr](docs/installation.md) — which provider CLIs and versions were
+  exercised, setup, backup, upgrade and rollback.
+- [Configure Chittr](docs/configuration.md) and [use Chittr](docs/usage.md) — configuration,
+  permissions, trusted commands, skills, the browser and terminal interfaces, room commands,
+  saved conversations and context compaction.
 - [Quality checks](docs/quality.md) — the supported macOS and Node matrix, exact tool
   versions, and the fresh-checkout procedure.
 - [Validation and known limits](docs/compatibility.md) — what is verified and what is
@@ -26,15 +31,15 @@ useful thing to paste into a report.
 
 ## Where to go
 
-| What you have                         | Where it goes                                                                                      |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| What you have                         | Where it goes                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | "How do I…" or "is this supposed to…" | A [question issue](https://github.com/chittr/chittr/issues/new/choose)                          |
 | Something is broken                   | A [bug issue](https://github.com/chittr/chittr/issues/new/choose), with `ai-chat doctor` output |
 | A feature idea                        | A [feature issue](https://github.com/chittr/chittr/issues/new/choose)                           |
 | Wrong or missing documentation        | A [documentation issue](https://github.com/chittr/chittr/issues/new/choose)                     |
-| A security vulnerability              | Privately, via [SECURITY.md](SECURITY.md). Never a public issue                                    |
-| Behaviour by a person in this project | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)                                                           |
-| You want to change the code           | [CONTRIBUTING.md](CONTRIBUTING.md)                                                                 |
+| A security vulnerability              | Privately, via [SECURITY.md](SECURITY.md). Never a public issue                                 |
+| Behaviour by a person in this project | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)                                                        |
+| You want to change the code           | [CONTRIBUTING.md](CONTRIBUTING.md)                                                              |
 
 Support and conduct are separate channels with separate handling. A frustrating support
 experience is not a conduct report, and a conduct report should not be filed as a public

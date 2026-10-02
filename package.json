@@ -19,6 +19,8 @@
     "PRIVACY.md",
     "README.md",
     "docs/installation.md",
+    "docs/configuration.md",
+    "docs/usage.md",
     "examples/user.yaml",
     "examples/project.yaml",
     "examples/three-providers.yaml"

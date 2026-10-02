@@ -8,7 +8,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative: string) => readFileSync(join(root, relative), 'utf8');
 
 const community = ['CONTRIBUTING.md', 'SECURITY.md', 'SUPPORT.md', 'CODE_OF_CONDUCT.md'];
-const linked = [...community, 'README.md', 'AGENTS.md', '.github/PULL_REQUEST_TEMPLATE.md'];
+const linked = [
+  ...community,
+  'README.md',
+  'AGENTS.md',
+  '.github/PULL_REQUEST_TEMPLATE.md',
+  'docs/configuration.md',
+  'docs/usage.md',
+];
 const formsDir = '.github/ISSUE_TEMPLATE';
 
 /** Relative Markdown link targets, excluding URLs, mailto and pure in-page anchors. */

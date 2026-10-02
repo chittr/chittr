@@ -191,7 +191,8 @@ image continuity is unavailable.
 ## Package contents
 
 The npm package includes built runtime modules and workers, browser assets,
-configuration examples, this guide, the README, [MIT licence](../LICENSE),
+configuration examples, this guide, the [configuration](configuration.md) and
+[usage](usage.md) guides, the README, [MIT licence](../LICENSE),
 [third-party notices](../THIRD_PARTY_NOTICES.md) and
 [privacy disclosures](../PRIVACY.md). It contains no provider CLI binaries,
 personal configuration, private evidence, tests or development scripts.
