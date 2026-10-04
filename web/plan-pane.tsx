@@ -3,7 +3,7 @@ import type { Message } from '../src/types.js';
 import type { PlanAction, PlanCategory, PlanEntry, PlanView } from '../src/plan-types.js';
 import type { PlanActionResult, WebPlanAction } from '../src/web-types.js';
 import { planSummary } from '../src/plan-view.js';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { MessageBody } from './message';
 
 interface Editor {
@@ -100,9 +100,15 @@ export function PlanPane({
         );
       }
     } catch (failure) {
-      setError(
-        `Acknowledgement not received: ${(failure as Error).message}. Check the same request before another plan action.`,
-      );
+      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500) {
+        savePending();
+        setError(failure.message);
+        setConflict(failure.status === 409);
+        await refresh().catch(() => {});
+      } else
+        setError(
+          `Acknowledgement not received: ${(failure as Error).message}. Check the same request before another plan action.`,
+        );
     } finally {
       operation.current = false;
       setBusy(false);

@@ -2521,3 +2521,70 @@ test('retries a lost plan acknowledgement with the same identity and preserves a
   );
   expect((await state(page)).session.plan!.entries[0]!.markdown).toBe('Changed elsewhere');
 });
+
+test('keeps a refused plan request editable so invalid sources can be corrected', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  const pane = page.getByRole('complementary', { name: 'Conversation plan' });
+  const text = pane.getByRole('textbox', { name: 'Plan text', exact: true });
+  const sources = pane.getByRole('textbox', { name: 'Plan sources', exact: true });
+  await text.fill('Keep this unsaved content');
+  await sources.fill('abc');
+  const response = page.waitForResponse((r) => r.url().endsWith('/api/plan'));
+  await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
+  expect((await response).status()).toBe(400);
+  await expect(pane.getByRole('alert')).toBeVisible();
+  await expect(text).toBeEnabled();
+  await expect(text).toHaveValue('Keep this unsaved content');
+  await expect(pane.getByRole('button', { name: 'Check plan request' })).toHaveCount(0);
+  await sources.fill('');
+  await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
+  await expect(pane.getByRole('article', { name: 'p1', exact: true })).toContainText(
+    'Keep this unsaved content',
+  );
+});
+
+test('does not carry an unacknowledged plan request into a new server instance', async ({
+  page,
+}) => {
+  const host = await state(page);
+  // Keep the mocked SSE transport open while emitting a second host identity.
+  await page.addInitScript((initial) => {
+    const request = window.fetch.bind(window);
+    window.fetch = (input, options) => {
+      if (input !== '/api/events') return request(input, options);
+      const stream = new ReadableStream({
+        start(controller) {
+          const emit = (snapshot: WebState) =>
+            controller.enqueue(
+              new TextEncoder().encode('event: state\ndata: ' + JSON.stringify(snapshot) + '\n\n'),
+            );
+          (window as unknown as { planSnapshot: typeof emit }).planSnapshot = emit;
+          emit(initial);
+        },
+      });
+      return Promise.resolve(
+        new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }),
+      );
+    };
+  }, host);
+  await page.reload();
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  const pane = page.getByRole('complementary', { name: 'Conversation plan' });
+  await page.route('**/api/plan', (route) => route.abort());
+  await pane.getByRole('textbox', { name: 'Plan text', exact: true }).fill('Retain across restart');
+  await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
+  await expect(pane.getByRole('button', { name: 'Check plan request' })).toBeEnabled();
+  await page.evaluate(
+    (snapshot) =>
+      (window as unknown as { planSnapshot(value: WebState): void }).planSnapshot(snapshot),
+    { ...host, instanceId: crypto.randomUUID() },
+  );
+  await expect(pane.getByRole('button', { name: 'Check plan request' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  await expect(pane.getByRole('textbox', { name: 'Plan text', exact: true })).toBeEnabled();
+  await expect(pane.getByRole('textbox', { name: 'Plan text', exact: true })).toHaveValue(
+    'Retain across restart',
+  );
+});

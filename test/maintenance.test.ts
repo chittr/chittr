@@ -2,6 +2,8 @@ import { afterEach, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { Room, newSession } from '../src/room.js';
 import { RoomController } from '../src/controller.js';
+import { checkPlanCapacity } from '../src/plan.js';
+import { planReserve, planView } from '../src/plan-view.js';
 import {
   checkpointChunks,
   checkpointPrompt,
@@ -1266,7 +1268,31 @@ it('compacts an agreement at admitted capacity and restores the exact plan on su
   room.planAction({
     kind: 'add',
     category: 'approach',
-    markdown: 'x'.repeat(58000),
+    markdown: 'x',
+    sourceIds: [],
+  });
+  const probe = structuredClone(room.session.plan!);
+  let low = 1,
+    high = 65536;
+  while (low < high) {
+    const size = Math.ceil((low + high) / 2);
+    probe.entries[0]!.markdown = 'x'.repeat(size);
+    try {
+      checkPlanCapacity(probe, room.session.messages);
+      low = size;
+    } catch {
+      high = size - 1;
+    }
+  }
+  probe.entries[0]!.markdown = 'x'.repeat(low);
+  expect(
+    Buffer.byteLength(JSON.stringify(planView(probe, room.session.messages))) + planReserve(probe),
+  ).toBe(65536);
+  room.planAction({
+    kind: 'edit',
+    entryId: 'p1',
+    revision: 1,
+    markdown: 'x'.repeat(low),
     sourceIds: [],
   });
   room.planAction({ kind: 'agree-all', revision: room.session.plan!.revision });
@@ -1276,42 +1302,51 @@ it('compacts an agreement at admitted capacity and restores the exact plan on su
   await idle(room);
   expect(room.session.agents.a!.maintenance?.status).toBe('completed');
   expect(room.session.plan).toEqual(plan);
-  expect(room.session.messages[1]).toEqual(agreement);
+  expect(room.session.messages[2]).toEqual(agreement);
   room.send('@a Continue discussion');
   await room.continue();
   await tick();
   await idle(room);
   const input = adapters.flatMap((a) => a.inputs).at(-1)!;
-  expect(input.plan!.entries[0]!.markdown).toBe('x'.repeat(58000));
+  expect(input.plan!.entries[0]!.markdown).toBe('x'.repeat(low));
   expect(input.plan!.agreement?.current).toBe(true);
-  expect(checkpointChunks(room.session.messages.slice(0, 2), []).flat()).toHaveLength(2);
+  expect(checkpointChunks(room.session.messages.slice(0, 3), []).flat()).toHaveLength(3);
 });
 
-it('refuses a combined recovery prompt above the limit and retains the prior plan and native reference', async () => {
-  const { room, adapters } = setup({
-    configure: (a, i) => {
-      if (i === 3) a.holdMaintenance = true;
-    },
-  });
-  await room.start();
-  room.pause();
-  room.planAction({
-    kind: 'add',
-    category: 'approach',
-    markdown: 'x'.repeat(58000),
-    sourceIds: [],
-  });
-  const plan = structuredClone(room.session.plan);
-  const reference = room.session.agents.a!.sessionId;
-  room.compact('a');
-  await tick();
-  room.send('@a ' + 'y'.repeat(45000));
-  room.send('@a ' + 'z'.repeat(45000));
-  adapters[3]!.release!();
-  await idle(room);
-  expect(room.session.agents.a!.maintenance?.status).toBe('failed');
-  expect(room.session.agents.a!.maintenance?.detail).toContain('total');
-  expect(room.session.agents.a!.maintenance?.detail).toContain('plan');
-  expect(room.session.plan).toEqual(plan);
-  expect(room.session.agents.a!.sessionId).toBe(reference);
-});
+it.each([false, true])(
+  'refuses a recovery prompt above the limit (non-plan alone: %s) and retains prior state',
+  async (nonPlanOverflow) => {
+    const { room, adapters } = setup({
+      configure: (a, i) => {
+        if (i === 3) a.holdMaintenance = true;
+      },
+    });
+    await room.start();
+    room.pause();
+    room.planAction({
+      kind: 'add',
+      category: 'approach',
+      markdown: 'x'.repeat(58000),
+      sourceIds: [],
+    });
+    const plan = structuredClone(room.session.plan);
+    const reference = room.session.agents.a!.sessionId;
+    room.compact('a');
+    await tick();
+    room.send('@a ' + 'y'.repeat(45000));
+    room.send('@a ' + 'z'.repeat(45000));
+    if (nonPlanOverflow) room.send('@a ' + 'w'.repeat(45000));
+    adapters[3]!.release!();
+    await idle(room);
+    expect(room.session.agents.a!.maintenance?.status).toBe('failed');
+    expect(room.session.agents.a!.maintenance?.detail).toContain('total');
+    expect(room.session.agents.a!.maintenance?.detail).toContain('plan');
+    expect(room.session.agents.a!.maintenance?.detail).toContain(
+      nonPlanOverflow
+        ? 'Non-plan input already exceeds the limit; shrinking the plan alone cannot fix this.'
+        : 'Shorten live entries or explicitly reject proposals/withdraw entries',
+    );
+    expect(room.session.plan).toEqual(plan);
+    expect(room.session.agents.a!.sessionId).toBe(reference);
+  },
+);

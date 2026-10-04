@@ -258,6 +258,8 @@ and assigns author, IDs and the introducing public message. Agents cannot assign
 agreement, state transitions or human authorship. Absent metadata is `plan:null`
 on the strict wire; legacy ordinary outcomes without the field still normalize.
 Passes, consultation outcomes and maintenance cannot contribute.
+An ordinary agent addition can create a missing plan with focus off. It creates
+proposed/open content only; it cannot enable focus or grant human agreement.
 
 All metadata, public sources and the complete ordered result are validated
 before publication. Unknown entries, impossible revisions, spoofed fields and

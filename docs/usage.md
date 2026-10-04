@@ -117,7 +117,9 @@ plan. Review the displayed revision before explicitly choosing to use it.
 
 Approach entries move between **Proposed approach** and **Agreed decisions**.
 An agent can add an entry, propose a revision, or comment. Agents cannot edit
-existing entries directly or grant agreement. **Adopt** applies a proposal and
+existing entries directly or grant agreement. An agent's first addition can
+create the document with focus off; only a human action enables planning focus.
+**Adopt** applies a proposal and
 leaves an approach proposed; **Adopt and agree** also records human agreement.
 **Agree** records the exact entry revision. A later edit makes the approach
 proposed again while preserving earlier agreement evidence.

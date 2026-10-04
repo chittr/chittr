@@ -4,6 +4,7 @@ import { QuestionContext, type QuestionDraft } from './question-card';
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -428,6 +429,23 @@ function App() {
   );
   const name = state?.workspace.split('/').filter(Boolean).at(-1) ?? 'Your workspace';
   const items = state ? timeline(state.session) : [];
+  const planLinksKey = JSON.stringify(
+    state?.session.plan?.entries
+      .filter((entry) => entry.roomQuestionId)
+      .map((entry) => [
+        entry.roomQuestionId,
+        { entryId: entry.id, revision: entry.revision, messageId: entry.messageId },
+      ]) ?? [],
+  );
+  const planLinks = useMemo(() => {
+    const links = new Map<string, PlanReference[]>();
+    for (const [id, reference] of JSON.parse(planLinksKey) as [string, PlanReference][]) {
+      const entries = links.get(id) ?? [];
+      entries.push(reference);
+      links.set(id, entries);
+    }
+    return links;
+  }, [planLinksKey]);
 
   const questionKey = (id: string) => `${state?.instanceId}:${state?.session.id}:question:${id}`;
   const getQuestionDraft = (id: string): QuestionDraft => {
@@ -750,9 +768,7 @@ function App() {
                   command={command}
                   reply={selectReply}
                   planEntry={openPlanEntry}
-                  planLinks={state!.session.plan?.entries
-                    .filter((e) => e.roomQuestionId === entry.item.id)
-                    .map((e) => ({ entryId: e.id, revision: e.revision, messageId: e.messageId }))}
+                  planLinks={planLinks.get(entry.item.id)}
                   pinned={entry.pinned}
                   disabled={disabled}
                 />
@@ -1185,7 +1201,7 @@ function App() {
       </main>
       {state && (
         <PlanPane
-          key={state.session.id}
+          key={state.instanceId + ':' + state.session.id}
           view={state.session.plan}
           messages={state.session.messages}
           sessionId={state.session.id}

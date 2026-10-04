@@ -7,10 +7,11 @@ import { SessionStore } from '../src/store.js';
 import { Room } from '../src/room.js';
 import {
   applyPlanContribution,
+  checkPlanCapacity,
   normalizePlanContribution,
   validatePlanHistory,
 } from '../src/plan.js';
-import { planBytes, planLimits, planView } from '../src/plan-view.js';
+import { planBytes, planLimits, planReserve, planView } from '../src/plan-view.js';
 import { publicMessage } from '../src/checkpoint.js';
 import { parseOutcomes, outputSchema, turnPrompt } from '../src/protocol.js';
 import { ComposerHistory } from '../src/composer-history.js';
@@ -476,4 +477,184 @@ it('retains plan data across reload and reconnect without changing its entries o
   await contribute(addition('After reconnect', 'objection'));
   expect(runs.at(-1)!.plan!.entries[0]!.markdown).toBe('Keep this plan');
   expect(runs.at(-1)!.plan!.agreement!.current).toBe(true);
+});
+
+it('admits the exact reserved view boundary and refuses one more UTF-8 byte through room actions', async () => {
+  await controller.submit('/plan add approach -- x');
+  const probe = structuredClone(controller.room.session.plan!);
+  const history = controller.room.session.messages;
+  let low = 1,
+    high = 65536;
+  while (low < high) {
+    const size = Math.ceil((low + high) / 2);
+    probe.entries[0]!.markdown = 'é'.repeat(Math.floor(size / 2)) + (size % 2 ? 'x' : '');
+    try {
+      checkPlanCapacity(probe, history);
+      low = size;
+    } catch {
+      high = size - 1;
+    }
+  }
+  const markdown = 'é'.repeat(Math.floor(low / 2)) + (low % 2 ? 'x' : '');
+  probe.entries[0]!.markdown = markdown;
+  const projected = planView(probe, history)!;
+  expect(Buffer.byteLength(JSON.stringify(projected)) + planReserve(probe)).toBe(65536);
+  expect(Buffer.byteLength(JSON.stringify(probe)) + planReserve(probe)).toBeLessThan(65536);
+  const before = structuredClone(controller.room.session);
+  await expect(
+    controller.planAction(
+      { kind: 'edit', entryId: 'p1', revision: 1, markdown: markdown + 'x', sourceIds: [] },
+      before.id,
+    ),
+  ).rejects.toThrow('capacity');
+  expect(controller.room.session).toEqual(before);
+  await controller.planAction(
+    { kind: 'edit', entryId: 'p1', revision: 1, markdown, sourceIds: [] },
+    before.id,
+  );
+  expect(controller.room.session.plan!.entries[0]!.markdown).toBe(markdown);
+  await controller.submit('/plan agree p1@2');
+  expect(controller.room.session.plan!.entries[0]!.status).toBe('agreed');
+  expect(store.load()?.plan).toEqual(controller.room.session.plan);
+  await controller.submit('/plan edit p1@2 -- Smaller');
+  await controller.submit('/plan withdraw p1@3');
+  expect(controller.room.session.plan!.entries).toHaveLength(0);
+});
+
+it('enforces the 80 KiB public action bound before replaying frozen evidence', async () => {
+  await controller.submit('/plan add approach -- Content');
+  await controller.submit('/plan agree-all 1');
+  const candidate = structuredClone(controller.room.session);
+  const action = candidate.messages.at(-1)!;
+  // The live/view admission limit keeps real agreements below this outer action limit.
+  // Corrupt padding distinguishes the byte guard from the later semantic replay check.
+  action.text += 'x'.repeat(81920 - Buffer.byteLength(JSON.stringify(publicMessage(action))));
+  expect(Buffer.byteLength(JSON.stringify(publicMessage(action)))).toBe(81920);
+  expect(() => validatePlanHistory(candidate)).toThrow('Invalid frozen plan action evidence');
+  action.text += 'x';
+  expect(() => validatePlanHistory(candidate)).toThrow('Plan capacity exceeded');
+});
+
+it('keeps agent comments on current and archived revisions after save and load', async () => {
+  await controller.submit('/plan add approach -- Original');
+  const current = await contribute({ ...proposal(), kind: 'comment', markdown: null });
+  await controller.submit('/plan edit p1@1 -- Later');
+  const older = await contribute({ ...proposal(), kind: 'comment', markdown: null });
+  await controller.submit('/plan withdraw p1@2');
+  const archived = await contribute({ ...proposal(), kind: 'comment', markdown: null });
+  for (const comment of [current, older, archived]) {
+    expect(comment.planContribution?.status).toBe('comment');
+    expect(comment.planReference).toEqual({ entryId: 'p1', revision: 1, messageId: 'm1' });
+    expect(publicMessage(comment).planReference).toEqual(comment.planReference);
+    expect(store.load()?.messages.find((m) => m.id === comment.id)).toEqual(comment);
+  }
+});
+
+it('keeps the prior plan and dispatch hold when an agent result cannot be saved', async () => {
+  await controller.submit('/plan add approach -- Saved');
+  const before = structuredClone(controller.room.session.plan);
+  let finish!: (outcomes: Outcome[]) => void;
+  reply = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  await controller.submit('@peer Think');
+  await tick();
+  const input = runs.at(-1)!;
+  const persist = vi.spyOn(store, 'save').mockImplementation(() => {
+    throw new Error('Disk full during reply');
+  });
+  finish([
+    {
+      kind: 'reply',
+      text: 'Never public',
+      recipients: ['human'],
+      messageIds: input.messages.map((m) => m.id),
+      plan: addition('Never saved'),
+    },
+  ]);
+  await tick();
+  expect(controller.room.session.plan).toEqual(before);
+  expect(controller.room.session.messages.some((m) => m.text === 'Never public')).toBe(false);
+  expect(controller.room.fatal).toContain('Work is paused');
+  expect(controller.room.session.paused).toBe(true);
+  expect(controller.room.session.agents.peer!.connection).toBe('ready');
+  persist.mockRestore();
+  expect(store.load()?.plan).toEqual(before);
+});
+
+it('limits section comments to 64 KiB of UTF-8 like ordinary messages', async () => {
+  await controller.submit('/plan add approach -- Original');
+  const text = '界'.repeat(21845) + 'x';
+  expect(Buffer.byteLength(text)).toBe(65536);
+  const before = controller.room.session.messages.length;
+  await expect(
+    controller.planAction(
+      { kind: 'comment', entryId: 'p1', revision: 1, text: text + 'x' },
+      controller.room.session.id,
+    ),
+  ).rejects.toThrow('64 KiB');
+  expect(controller.room.session.messages).toHaveLength(before);
+  await controller.planAction(
+    { kind: 'comment', entryId: 'p1', revision: 1, text },
+    controller.room.session.id,
+  );
+  expect(controller.room.session.messages.at(-1)!.text).toBe(text);
+});
+
+it('accepts reordered JSON object keys without weakening frozen evidence checks', async () => {
+  await controller.submit('/plan add approach -- Original');
+  await contribute(proposal());
+  await controller.submit('/plan adopt-agree r1 p1@1');
+  const original = structuredClone(controller.room.session);
+  const reorder = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(reorder)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .reverse()
+              .map(([key, item]) => [key, reorder(item)]),
+          )
+        : value;
+  const path = join(store.directory, original.id, 'session.json');
+  writeFileSync(path, JSON.stringify(reorder(original)));
+  expect(store.load(original.id)?.plan).toEqual(original.plan);
+});
+
+it('rejects an agent-claimed introducing message ID outside its fixed public history', async () => {
+  reply = async (input) => [
+    {
+      kind: 'reply',
+      text: 'Invalid extra source',
+      recipients: ['human'],
+      messageIds: input.messages.map((m) => m.id),
+      plan: { ...addition(), sourceIds: ['m2'] },
+    },
+  ];
+  await controller.submit('@peer Think');
+  await tick();
+  expect(controller.room.session.messages.map((m) => m.id)).toEqual(['m1']);
+  expect(controller.room.session.plan).toBeUndefined();
+  expect(controller.room.session.agents.peer!.error).toContain('Invalid plan public source');
+});
+
+it('counts host-added sources inside the byte budget without an inconsistent array limit', async () => {
+  for (let i = 0; i < 256; i++) await controller.submit('@human Source ' + i);
+  const sourceIds = controller.room.session.messages.map((m) => m.id);
+  await contribute({ ...addition(), sourceIds });
+  const entry = controller.room.session.plan!.entries[0]!;
+  expect(entry.sourceIds).toHaveLength(257);
+  await controller.planAction(
+    {
+      kind: 'edit',
+      entryId: entry.id,
+      revision: entry.revision,
+      markdown: 'Retain these sources',
+      sourceIds: entry.sourceIds,
+    },
+    controller.room.session.id,
+  );
+  expect(controller.room.session.plan!.entries[0]!.sourceIds).toHaveLength(258);
+  expect(store.load()?.plan).toEqual(controller.room.session.plan);
 });

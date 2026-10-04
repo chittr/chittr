@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
 import type { Message, Session } from './types.js';
 import type {
   Plan,
@@ -16,7 +17,8 @@ const entryId = z.string().regex(/^p[1-9]\d{0,15}$/);
 const proposalId = z.string().regex(/^r[1-9]\d{0,15}$/);
 const revision = z.number().int().positive().safe();
 const category = z.enum(['approach', 'objection', 'question']);
-const sourceIds = z.array(id).max(256);
+// Byte budgets bound sources together with their content, including the host-added source.
+const sourceIds = z.array(id);
 const markdown = z
   .string()
   .min(1)
@@ -69,7 +71,16 @@ export const planActionSchema = z.discriminatedUnion('kind', [
     .object({ kind: z.literal('agree-all'), revision: z.number().int().nonnegative().safe() })
     .strict(),
   z
-    .object({ kind: z.literal('comment'), ...target, text: z.string().trim().min(1).max(65536) })
+    .object({
+      kind: z.literal('comment'),
+      ...target,
+      text: z
+        .string()
+        .trim()
+        .min(1)
+        .max(65536)
+        .refine((text) => Buffer.byteLength(text) <= 65536, 'Message exceeds the limit of 64 KiB'),
+    })
     .strict(),
 ]);
 const referenceSchema = z.object({ entryId, revision, messageId: id }).strict();
@@ -163,10 +174,7 @@ export const emptyPlan = (): Plan => ({
   proposals: [],
 });
 function sources(ids: string[], history: readonly Message[], own?: string): string[] {
-  if (
-    new Set(ids).size !== ids.length ||
-    ids.some((value) => value !== own && !history.some((m) => m.id === value))
-  )
+  if (new Set(ids).size !== ids.length || ids.some((value) => !history.some((m) => m.id === value)))
     throw new Error('Invalid plan public source IDs');
   return [...new Set([...ids, ...(own ? [own] : [])])];
 }
@@ -504,6 +512,7 @@ export function validatePlanHistory(session: Session): void {
       const previous = [...replay.messages];
       replay.messages.push(message);
       if (original.planAction !== undefined) {
+        if (planBytes(publicMessage(original)) > planLimits.action) throw new PlanCapacityError();
         const record = actionRecordSchema.parse(original.planAction);
         if (
           original.author !== 'human' ||
@@ -517,7 +526,7 @@ export function validatePlanHistory(session: Session): void {
           original.attachments?.length ||
           original.recipients.length ||
           original.replyTo.length ||
-          JSON.stringify(original.roots) !== JSON.stringify([original.id]) ||
+          !isDeepStrictEqual(original.roots, [original.id]) ||
           !session.exchanges[original.id] ||
           !z.iso.datetime().safeParse(original.createdAt).success
         )
@@ -576,7 +585,7 @@ export function validatePlanHistory(session: Session): void {
         }
         applyPlanAction(replay, action, message, record.humanName);
         if (
-          JSON.stringify(message.planAction) !== JSON.stringify(original.planAction) ||
+          !isDeepStrictEqual(message.planAction, original.planAction) ||
           message.text !== original.text
         )
           throw new Error('Invalid frozen plan action evidence');
@@ -590,19 +599,19 @@ export function validatePlanHistory(session: Session): void {
         )
           throw new Error('Invalid agent plan contribution authority');
         applyPlanContribution(replay, original.planContribution.input, message, previous);
-        if (JSON.stringify(message.planContribution) !== JSON.stringify(original.planContribution))
+        if (!isDeepStrictEqual(message.planContribution, original.planContribution))
           throw new Error('Invalid plan contribution evidence');
       }
       if (original.planReference !== undefined) {
         const ref = referenceSchema.parse(original.planReference);
-        if (JSON.stringify(ref) !== JSON.stringify(findPlanReference(previous, ref)))
+        if (!isDeepStrictEqual(ref, findPlanReference(previous, ref)))
           throw new Error('Invalid plan comment reference');
         message.planReference = ref;
       }
-      if (JSON.stringify(message.planReference) !== JSON.stringify(original.planReference))
+      if (!isDeepStrictEqual(message.planReference, original.planReference))
         throw new Error('Missing plan comment reference');
     }
-    if (JSON.stringify(replay.plan) !== JSON.stringify(session.plan))
+    if (!isDeepStrictEqual(replay.plan, session.plan))
       throw new Error('Current plan disagrees with its public evidence');
     if (session.plan) checkPlanCapacity(session.plan, session.messages, false);
   } catch (error) {

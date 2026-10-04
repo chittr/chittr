@@ -117,7 +117,7 @@ export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[]
     const planLabel = m.planAction
       ? `Human plan action · /message #${m.id} for frozen evidence`
       : m.planContribution
-        ? `Plan ${m.planContribution.status === 'capacity' ? 'not added to plan: capacity' : m.planContribution.status}${m.planContribution.proposalId ? ' ' + m.planContribution.proposalId : ''}`
+        ? `Plan ${m.planContribution.status === 'capacity' ? 'not added to plan: capacity' : 'at publication: ' + m.planContribution.status}${m.planContribution.proposalId ? ' ' + m.planContribution.proposalId : ''}`
         : '';
     const planRef = m.planReference ?? m.planContribution?.reference;
     for (const [i, row] of copyWrapped(

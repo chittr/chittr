@@ -212,7 +212,7 @@ export const MessageCard = memo(function MessageCard({
             <p>
               {message.planContribution.status === 'capacity'
                 ? 'not added to plan: capacity'
-                : 'Plan contribution: ' + message.planContribution.status}
+                : 'Plan contribution at publication: ' + message.planContribution.status}
               {message.planContribution.proposalId ? ' ' + message.planContribution.proposalId : ''}
             </p>
             {message.planContribution.input.markdown && (
