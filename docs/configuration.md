@@ -122,6 +122,14 @@ The prompt labels YAML room instructions, the saved conversation brief and agent
 
 `/config` shows the selected room YAML source, including an explicit clearing override, and whether the conversation has a saved brief and its origin. Editing shared YAML and running idle `/reload` restarts affected participants with current instructions and public history. It retains the saved brief. Agent-only instruction changes restart only that participant.
 
+The [maintained plan](usage.md#maintained-planning-document) belongs to the
+conversation, separately from these instruction sources. `/plan` supplies
+planning focus as labelled turn data; it neither activates nor edits instruction
+files. Focus and human agreement grant no permissions and do not change provider
+fingerprints. `/plan off` removes only focus guidance, and an explicit human
+implementation request still applies while focus is on. Plan edits require no
+reload or provider restart.
+
 ## Migrating an older user config
 
 To migrate an existing user config, rename its top-level `agents` key to `defaultAgents`, preserving its contents. The old user-level key remains supported as a fallback alias; files are never rewritten automatically. Defining both keys in user config is an error. Existing project configs that relied on partial agent overrides must now specify `provider` and any desired agent settings themselves. The legacy `instructions.mode` field remains accepted, but sources no longer merge across user and project rosters.

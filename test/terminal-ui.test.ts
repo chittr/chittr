@@ -479,3 +479,27 @@ it('cancels ingestion before dispatch without accepting or resurrecting its stag
   expect(controller.room.session.composerDraft).toBe('caption');
   expect(frame()).not.toContain('Attachment error:');
 });
+
+it('opens plan and exact-message views locally and keeps the plan indicator after dismissal', async () => {
+  feed('/plan\r');
+  await vi.waitFor(() => expect(stripAnsi(frame())).toContain('focus on'));
+  expect(controller.room.session.messages).toHaveLength(1);
+  expect(controller.room.session.messages[0]!.deliveries).toEqual({});
+  feed('\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await controller.submit('/plan add approach -- Terminal plan content');
+  const notices = controller.room.session.notices.length;
+  feed('/plan show\r');
+  await vi.waitFor(() => expect(stripAnsi(frame())).toContain('Terminal plan content'));
+  expect(controller.room.session.notices).toHaveLength(notices);
+  feed('\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  expect(stripAnsi(frame())).toContain('Plan: focus on');
+  feed('/message #m2\r');
+  await vi.waitFor(() => expect(stripAnsi(frame())).toContain('#m2'));
+  expect(controller.room.session.messages).toHaveLength(2);
+  feed('\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  feed('/new\r');
+  await vi.waitFor(() => expect(controller.room.session.plan).toBeUndefined());
+});

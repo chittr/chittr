@@ -1189,3 +1189,49 @@ it('rejects terminal attachment commands and completion, including forged author
   expect(controller.room.session.notices.at(-1)?.text).not.toContain('/attach');
   expect((await upload()).status).toBe(201);
 });
+
+it('serializes plan actions independently of composer state and deduplicates exact retries', async () => {
+  controller.room.saveDraft('Chat draft stays');
+  const sessionId = controller.room.session.id;
+  const request = {
+    id: randomUUID(),
+    sessionId,
+    action: { kind: 'add', category: 'approach', markdown: 'Plan content', sourceIds: [] },
+  };
+  const first = await post('/api/plan', request);
+  expect(first.status).toBe(200);
+  const result = await first.json();
+  expect(result).toMatchObject({ ok: true, messageId: 'm1' });
+  expect(await (await post('/api/plan', request)).json()).toEqual(result);
+  expect(controller.room.session.messages).toHaveLength(1);
+  expect(controller.room.session.composerDraft).toBe('Chat draft stays');
+  expect(
+    (await post('/api/plan', { ...request, action: { ...request.action, markdown: 'Changed' } }))
+      .status,
+  ).toBe(409);
+  expect((await command('@human Reused across endpoints', request.id)).status).toBe(409);
+  const stale = await post('/api/plan', {
+    id: randomUUID(),
+    sessionId,
+    action: { kind: 'edit', entryId: 'p1', revision: 5, markdown: 'Stale input', sourceIds: [] },
+  });
+  expect(await stale.json()).toMatchObject({ ok: false, conflict: true });
+  await controller.submit('/new');
+  const switched = await post('/api/plan', { ...request, id: randomUUID() });
+  expect(await switched.json()).toMatchObject({ ok: false, conflict: true });
+  expect(controller.room.session.plan).toBeUndefined();
+});
+
+it('protects the plan endpoint with the existing origin and bearer rules and rejects spoofed action fields', async () => {
+  const body = {
+    id: randomUUID(),
+    sessionId: controller.room.session.id,
+    action: { kind: 'focus', enabled: true },
+  };
+  expect((await post('/api/plan', body, { Authorization: 'Bearer wrong' })).status).toBe(401);
+  expect((await post('/api/plan', body, { Origin: 'https://other.example' })).status).toBe(403);
+  expect(
+    (await post('/api/plan', { ...body, action: { ...body.action, author: 'human' } })).status,
+  ).toBe(400);
+  expect(controller.room.session.plan).toBeUndefined();
+});

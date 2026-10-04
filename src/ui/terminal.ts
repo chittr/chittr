@@ -4,6 +4,8 @@ import stringWidth from 'string-width';
 import wrapAnsi from 'wrap-ansi';
 import { maintenanceLabel } from '../participant-status.js';
 import type { Room } from '../room.js';
+import { planSummary, planText } from '../plan-view.js';
+import { publicMessage } from '../checkpoint.js';
 import { complete } from '../completion.js';
 import { ComposerHistory } from '../composer-history.js';
 import { questionDetails, unansweredQuestions } from '../questions.js';
@@ -112,6 +114,22 @@ export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[]
       text: `${color}${fit(`${m.author === 'human' ? humanName : m.author}  #${m.id}${entry.pinned ? '  [pinned]' : ''}${m.recipients.length ? ' → ' + m.recipients.map((n) => (n === 'human' ? humanName : '@' + n)).join(' ') : ''}${m.replyTo.length ? '  ↳ ' + m.replyTo.map((id) => '#' + id).join(', ') : ''}`, width)}${reset}`,
     });
     lines.push(...markdownLines(m.text, width, `${m.id}:text`, m));
+    const planLabel = m.planAction
+      ? `Human plan action · /message #${m.id} for frozen evidence`
+      : m.planContribution
+        ? `Plan ${m.planContribution.status === 'capacity' ? 'not added to plan: capacity' : m.planContribution.status}${m.planContribution.proposalId ? ' ' + m.planContribution.proposalId : ''}`
+        : '';
+    const planRef = m.planReference ?? m.planContribution?.reference;
+    for (const [i, row] of copyWrapped(
+      [
+        planLabel,
+        planRef ? `${planRef.entryId}@${planRef.revision} · source #${planRef.messageId}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      width,
+    ).entries())
+      if (row.text) lines.push({ ...row, key: `${m.id}:plan:${i}` });
     for (const attachment of m.attachments ?? [])
       for (const [i, row] of copyWrapped(
         'Image ' + attachmentLabel(attachment),
@@ -119,7 +137,13 @@ export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[]
       ).entries())
         lines.push({ ...row, key: `${m.id}:${attachment.id}:${i}`, text: `  ${row.text}` });
     if (m.question) {
-      const questionText = questionDetails(questions, m);
+      const linked = snapshot.session.plan?.entries.filter((e) => e.roomQuestionId === m.id) ?? [];
+      const questionText =
+        questionDetails(questions, m) +
+        (linked.length
+          ? '\nPlan: ' +
+            linked.map((e) => `${e.id}@${e.revision} (independent resolution)`).join(', ')
+          : '');
       for (const [i, row] of copyWrapped(questionText, width - 2).entries())
         lines.push({ ...row, key: `${m.id}:question:${i}`, text: `${amber}  ${row.text}${reset}` });
     }
@@ -144,7 +168,38 @@ export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[]
   }
   return lines;
 }
+/** Transient views always read the current projection; no document copy is saved as a notice. */
+export function planDocument(
+  snapshot: RoomSnapshot,
+  width: number,
+  target = 'plan',
+): DisplayLine[] {
+  const { messages, plan } = snapshot.session;
+  const message = messages.find((m) => m.id === target);
+  const text =
+    target === 'plan'
+      ? [
+          planText(plan),
+          '\n## Comments and archived or refused contributions',
+          ...messages
+            .filter(
+              (m) =>
+                m.planReference ||
+                m.planAction?.kind === 'withdraw' ||
+                ['capacity', 'not-applicable'].includes(m.planContribution?.status ?? ''),
+            )
+            .map(
+              (m) =>
+                `#${m.id} ${m.planReference ? `${m.planReference.entryId}@${m.planReference.revision}` : (m.planContribution?.status ?? 'withdrawn')} · @${m.author}\n${m.text}${m.planContribution?.input.markdown ? '\n' + m.planContribution.input.markdown : ''}`,
+            ),
+        ].join('\n\n')
+      : message
+        ? `#${message.id} · @${message.author}\n${message.text}\n\n${JSON.stringify(publicMessage(message), null, 2)}`
+        : 'Message is no longer in this conversation.';
+  return copyWrapped(text, width).map((row, i) => ({ ...row, key: `document:${i}` }));
+}
 export class TerminalUI {
+  private document?: 'plan' | string;
   private value = '';
   private cursor = 0;
   private history = new ComposerHistory();
@@ -269,6 +324,7 @@ export class TerminalUI {
   setRoom(room: Room): void {
     this.closeAction();
     this.pendingAction = undefined;
+    this.document = undefined;
     this.history.reset();
     this.room.off('change', this.changed);
     this.room = room;
@@ -373,6 +429,12 @@ export class TerminalUI {
       this.cursor = this.value.length;
       this.suggestions = [];
       this.fileBrowser = undefined;
+      this.draw();
+      return;
+    }
+    if (this.document && key.name === 'escape') {
+      this.document = undefined;
+      this.anchor = undefined;
       this.draw();
       return;
     }
@@ -592,6 +654,28 @@ export class TerminalUI {
     const hasImages = Boolean(room.session.composerAttachments?.length);
     if (this.submitting || (!this.value.trim() && !hasImages)) return;
     const line = this.value;
+    if (/^\/plan\s+show\s*$/.test(line) || /^\/message(?:\s|$)/.test(line)) {
+      const id = /^\/message\s+#?(m[1-9]\d*)\s*$/.exec(line)?.[1];
+      if (line.startsWith('/message') && (!id || !room.message(id))) {
+        this.feedback = 'Usage: /message #existing-message-id';
+        this.draw();
+        return;
+      }
+      if (hasImages) {
+        this.feedback =
+          'View commands do not send attachments; keep or remove the staged images first.';
+        this.draw();
+        return;
+      }
+      this.document = id ?? 'plan';
+      this.value = '';
+      this.cursor = 0;
+      room.saveDraft('');
+      this.anchor = { key: 'document:0', text: '' };
+      this.top = 0;
+      this.draw();
+      return;
+    }
     this.history.reset();
     this.submitting = true;
     // Text commands can close/switch the room. The controller clears the server draft before
@@ -609,6 +693,11 @@ export class TerminalUI {
     try {
       const result = await outcome;
       if (this.room === room && result.recovery.status === 'restored') this.cursor = line.length;
+      if (result.dispatch.status === 'sent' && /^\/plan\s*$/.test(line) && this.room === room) {
+        this.document = 'plan';
+        this.anchor = { key: 'document:0', text: '' };
+        this.top = 0;
+      }
       if (result.dispatch.status === 'failed' && result.commitment.status !== 'committed')
         throw new Error(result.dispatch.error);
     } catch (error) {
@@ -709,6 +798,7 @@ export class TerminalUI {
       for (const line of wrapped(summary, width).slice(0, Math.max(1, Math.min(4, height - 12))))
         header.push(`${amber}${line}${reset}`);
     }
+    if (session.plan) header.push(`${cyan}${fit(planSummary(session.plan), width)}${reset}`);
     const agents = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
     const participants = snapshot.sessionAgentIds
       .flatMap((id) => {
@@ -791,7 +881,9 @@ export class TerminalUI {
       1,
       height - header.length - composerHeight - completionRows.length - 2,
     );
-    this.cachedLines = transcript(snapshot, width);
+    this.cachedLines = this.document
+      ? planDocument(snapshot, width, this.document)
+      : transcript(snapshot, width);
     for (const attachment of session.composerAttachments)
       for (const [i, text] of wrapped('Staged ' + attachmentLabel(attachment), width).entries())
         this.cachedLines.push({ key: `staged:${attachment.id}:${i}`, text });
@@ -853,7 +945,11 @@ export class TerminalUI {
     const body: CopyRow[] = this.cachedLines.slice(this.top, this.top + this.visibleHeight);
     while (body.length < this.visibleHeight) body.push({ text: '' });
     const below = Math.max(0, this.cachedLines.length - this.top - this.visibleHeight);
-    const position = this.anchor ? `History · ${below} lines below · Esc latest` : 'Latest';
+    const position = this.document
+      ? `${this.document === 'plan' ? 'Plan' : '#' + this.document} · PgUp/PgDn · Esc back to chat`
+      : this.anchor
+        ? `History · ${below} lines below · Esc latest`
+        : 'Latest';
     const divider = fit(`─ ${position} `, width);
     const output: CopyRow[] = [
       ...header.map((text) => ({ text })),

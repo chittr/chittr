@@ -11,6 +11,8 @@ import type {
   RoomConfig,
   Session,
 } from './types.js';
+import { planView } from './plan-view.js';
+import type { PlanView } from './plan-types.js';
 import type { ImagePathSupport } from './image-support.js';
 import type { QuestionSession } from './questions.js';
 import { commandAccessSummary, resolveCommandAccess } from './command-access.js';
@@ -58,6 +60,7 @@ export interface SessionSnapshot {
   notices: Notice[];
   exchanges: Record<string, Exchange>;
   checkpoint?: Checkpoint;
+  plan?: PlanView;
 }
 export interface RoomSnapshot {
   workspace: string;
@@ -130,6 +133,7 @@ export function projectRoom(room: RoomSource): RoomSnapshot {
       notices: session.notices,
       exchanges: session.exchanges,
       checkpoint: session.checkpoints?.at(-1),
+      ...(session.plan ? { plan: planView(session.plan, session.messages) } : {}),
     },
     agents: [...ids].map((id) => {
       const agent = config.agents[id];

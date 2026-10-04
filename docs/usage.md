@@ -94,6 +94,118 @@ Every required message gets a contribution or a compact pass with a rationale. P
 
 The participant strip shows connection state, considering/replying/tool activity, explicit waiting for you, pauses, and queued or unresolved work. Delivery lines distinguish queued, sent, received, contributed, passed, interrupted, and failed. Receipt is a provider acknowledgment, not a claim about understanding.
 
+## Maintained planning document
+
+`/plan` creates one plan for this conversation, opens its view and enables
+planning focus. It does not start an agent turn. Send an ordinary message to
+ask the agents to plan. `/plan off` keeps the document and removes focus
+guidance; `/plan show` opens it without changing focus. Both clients render
+that view from current room state rather than saving a document copy in a notice.
+
+Focus asks agents to analyse, contribute to the plan and identify assumptions
+and questions. It does not change permissions or activate instruction files.
+An explicit instruction to implement still applies while focus is on. Agreement
+alone never starts implementation: give that instruction separately in chat.
+
+In the browser, **Plan** opens a pane beside chat. On a narrow screen it replaces
+the visible conversation; **Back to chat** returns without discarding either
+draft. The pane has a Markdown editor, sources, comments and pending proposals.
+Its requests and editor are independent of the chat composer and staged images.
+If an acknowledgement is lost, **Check plan request** retries the same identity
+during that server launch. A conflict preserves your text and refreshes the
+plan. Review the displayed revision before explicitly choosing to use it.
+
+Approach entries move between **Proposed approach** and **Agreed decisions**.
+An agent can add an entry, propose a revision, or comment. Agents cannot edit
+existing entries directly or grant agreement. **Adopt** applies a proposal and
+leaves an approach proposed; **Adopt and agree** also records human agreement.
+**Agree** records the exact entry revision. A later edit makes the approach
+proposed again while preserving earlier agreement evidence.
+
+**Agree to plan** agrees to all displayed approach revisions in one action,
+including proposed additions. It checks the displayed plan revision, so it
+cannot include unseen changes. Open objections, questions and pending revision
+proposals remain outstanding and are listed in the agreement record. A later
+addition or change makes that whole-plan agreement historical. Entry actions
+check only their target revision, so unrelated contributions do not invalidate
+an entry edit or agreement. Competing proposals remain visible; after their
+base revision changes they become stale and can only be rejected or re-proposed.
+
+Only the human resolves or reopens an objection/question, with an explanation.
+Editing its wording does not resolve it. A linked room question shows its own
+answered/unanswered status. Answering that question and resolving the plan
+entry are separate actions. Research questions need no room question link.
+
+Every source and comment links to a public message. Comments are ordinary routed
+messages and may start discussion; their entry revision remains fixed after
+edits or withdrawal. Human edits, agreement, adoption, resolution and withdrawal
+create public action records with no agent deliveries. Expand **Exact plan
+action evidence** to inspect frozen content, attribution and time. Withdrawal
+releases live content while retaining that evidence. Plan action records do not
+appear in composer recall or saved-conversation previews.
+
+### Terminal plan actions
+
+The terminal continuously shows focus, agreement and outstanding-work counts.
+`/plan show` opens the full transient view; use Page Up/Page Down to read and
+Escape to return. Entry IDs and revisions are shown as `p1@2`; proposal IDs look
+like `r1`. `/message #m4` opens an exact source or action message.
+
+```text
+/plan
+/plan add approach -- Keep a bounded cache.
+/plan add objection #m2 -- Eviction needs an explicit recovery path.
+/plan add question question:#m3 -- Determine expected capacity.
+/plan edit p1@1 #m2 -- Keep a small LRU cache.
+/plan adopt r1 p1@2
+/plan adopt-agree r2 p1@3
+/plan reject r3
+/plan agree p1@4
+/plan agree-all 9
+/plan resolve p2@1 -- Recovery was tested against the fixture.
+/plan reopen p2@1 -- The deployment case still needs research.
+/plan comment p1@4 -- @claude Check this exact revision.
+/plan withdraw p2@1
+/plan off
+/plan show
+/message #m4
+```
+
+Use the IDs and revisions shown in your conversation; these examples illustrate
+syntax, not a sequence to paste. Sources before `--` are optional existing
+public message IDs. `question:#m3` is an optional room-question link on a new
+question entry. Markdown after `--` remains literal. Tab completes actions and
+entry categories. `/help` includes the full command syntax.
+
+### Plan limits and recovery
+
+Limits count UTF-8 JSON bytes: 8 KiB per agent contribution metadata, 64 KiB
+for the live record and independently for its complete turn view, and 80 KiB
+for an immutable public human action including its frozen evidence. The view
+reports used and available bytes. Some space is reserved for agreement and
+status changes, rejection, withdrawal and smaller edits at capacity. Completed
+proposal dispositions and old agreements live in public history, outside the
+live plan record.
+
+If a human edit cannot fit, it is refused and the editor text stays. An otherwise
+valid agent reply still appears with **not added to plan: capacity** when its
+contribution cannot fit. Reclaim space by shortening entries, rejecting proposals
+or withdrawing entries. Chittr does not evict unresolved work or truncate the
+plan. A stale or withdrawn target does not disconnect an agent.
+
+Normal turns receive the exact current plan even with focus off. Plan edits do
+not restart provider sessions. Resume, reconnect, reload and compaction retain
+the plan; `/new` starts without one and switching conversations restores only
+the destination's plan. Current configuration still controls tool permissions.
+Compaction/restart recovery also checks the complete next prompt against
+128 KiB. If it is too large, the prior context and plan remain, with the existing
+recovery hold and total/plan byte counts. Shorten or release plan content before
+retrying when it contributes to the overflow. If non-plan input alone exceeds
+the limit, shrinking the plan alone cannot fix it. A storage failure retains
+the prior plan and pauses dispatch. Invalid saved plan data refuses loading and
+leaves the saved file untouched. Older version-1 conversations without plans
+remain readable; downgrade compatibility has not been established.
+
 ## Terminal keyboard
 
 | Key                 | Action                                                                     |
@@ -132,30 +244,32 @@ Pins are saved with each conversation and survive resume. Pin any human or agent
 
 ### Room commands
 
-| Command                            | Action                                                                             |
-| ---------------------------------- | ---------------------------------------------------------------------------------- |
-| `/pause [@agent]`                  | Finish active turns, then hold new turns                                           |
-| `/stop [@agent]`                   | Interrupt active turns and hold new turns                                          |
-| `/continue [@agent]`               | Release that manual pause; reconnect stopped agents                                |
-| `/continue #m1`                    | Add another follow-up allowance to the initiating exchange                         |
-| `/reconnect @agent`                | Reconnect with that participant's work paused                                      |
-| `/compact [@agent] [instructions]` | Compact one agent, or all enabled and ready agents; optional focus where supported |
-| `/checkpoint`                      | Read the latest checkpoint and its source message IDs                              |
-| `/retry #m1 @agent`                | Explicitly queue a failed or interrupted response again                            |
-| `/questions`                       | List open questions, choices, consultation state and advice                        |
-| `/ask-room #m2`                    | Gather attributed opinions; leave the final decision to the human                  |
-| `/answer #m2 text`                 | Send a literal answer only to the question's author                                |
-| `/choose #m2 1`                    | Answer with a numbered choice                                                      |
-| `/pin #m1`                         | Pin a message in this conversation                                                 |
-| `/unpin #m1`                       | Remove a message pin                                                               |
-| `/pins`                            | Read pinned messages with their IDs, authors, and full text                        |
-| `/reload`                          | Validate and apply config while all agents are idle                                |
-| `/config`                          | Show effective config and provenance                                               |
-| `/participants`                    | List all agents with provider, model, effort, context usage, status, and queues    |
-| `/new`                             | Start a separate conversation while idle                                           |
-| `/sessions [ID]`                   | List or open saved conversations for this workspace                                |
-| `/help`                            | Show controls                                                                      |
-| `/quit`                            | Stop, save, and exit                                                               |
+| Command                            | Action                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `/pause [@agent]`                  | Finish active turns, then hold new turns                                                                               |
+| `/stop [@agent]`                   | Interrupt active turns and hold new turns                                                                              |
+| `/continue [@agent]`               | Release that manual pause; reconnect stopped agents                                                                    |
+| `/continue #m1`                    | Add another follow-up allowance to the initiating exchange                                                             |
+| `/reconnect @agent`                | Reconnect with that participant's work paused                                                                          |
+| `/compact [@agent] [instructions]` | Compact one agent, or all enabled and ready agents; optional focus where supported                                     |
+| `/checkpoint`                      | Read the latest checkpoint and its source message IDs                                                                  |
+| `/retry #m1 @agent`                | Explicitly queue a failed or interrupted response again                                                                |
+| `/questions`                       | List open questions, choices, consultation state and advice                                                            |
+| `/ask-room #m2`                    | Gather attributed opinions; leave the final decision to the human                                                      |
+| `/answer #m2 text`                 | Send a literal answer only to the question's author                                                                    |
+| `/choose #m2 1`                    | Answer with a numbered choice                                                                                          |
+| `/pin #m1`                         | Pin a message in this conversation                                                                                     |
+| `/unpin #m1`                       | Remove a message pin                                                                                                   |
+| `/pins`                            | Read pinned messages with their IDs, authors, and full text                                                            |
+| `/plan [action]`                   | Open/enable planning, or edit, adopt, agree, resolve, comment and withdraw; see [plan actions](#terminal-plan-actions) |
+| `/message #id`                     | Open an exact public message locally                                                                                   |
+| `/reload`                          | Validate and apply config while all agents are idle                                                                    |
+| `/config`                          | Show effective config and provenance                                                                                   |
+| `/participants`                    | List all agents with provider, model, effort, context usage, status, and queues                                        |
+| `/new`                             | Start a separate conversation while idle                                                                               |
+| `/sessions [ID]`                   | List or open saved conversations for this workspace                                                                    |
+| `/help`                            | Show controls                                                                                                          |
+| `/quit`                            | Stop, save, and exit                                                                                                   |
 
 ### Pauses, failures and follow-up turns
 

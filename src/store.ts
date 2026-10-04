@@ -29,6 +29,7 @@ import {
   type AttachmentAccess,
   type StageAttachmentInput,
 } from './attachments.js';
+import { validatePlanHistory } from './plan.js';
 import { launchBriefSchema } from './instructions.js';
 const strings = z.array(z.string());
 const activity = z.enum(['available', 'considering', 'replying', 'working', 'waiting']);
@@ -210,6 +211,7 @@ export class SessionStore implements Persistence {
     if (session.workspace !== this.workspace || !/^[\da-f-]{36}$/.test(session.id))
       throw new Error('Invalid session identity');
     launchBriefSchema.optional().parse(session.launchBrief);
+    validatePlanHistory(session);
     validateQuestionHistory(session.messages);
     freezeLegacyQuestions(session.messages);
     const folder = join(this.directory, session.id);
@@ -309,6 +311,7 @@ export class SessionStore implements Persistence {
         ))
     )
       throw new Error('Saved message pins are invalid; the session has not been overwritten');
+    validatePlanHistory(session);
     validateQuestionHistory(session.messages);
     // Migrate the original record before auxiliary recovery changes it in memory.
     // Loading/listing must not select a different latest session or change its timestamp.
@@ -402,7 +405,7 @@ export class SessionStore implements Persistence {
           id,
           updatedAt: s.updatedAt,
           preview: (() => {
-            const first = s.messages.find((m) => m.author === 'human');
+            const first = s.messages.find((m) => m.author === 'human' && !m.planAction);
             if (!first) return 'Empty conversation';
             return (
               first.text.slice(0, 80) ||

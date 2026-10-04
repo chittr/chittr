@@ -4,12 +4,21 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { RoomController } from './controller.js';
+import { ConversationChangedError, RoomController } from './controller.js';
+import { PlanConflictError, planActionSchema } from './plan.js';
 import { complete } from './completion.js';
-import type { CommandResult, StageAttachmentResult, WebState } from './web-types.js';
+import type {
+  CommandResult,
+  PlanActionResult,
+  StageAttachmentResult,
+  WebState,
+} from './web-types.js';
 import { AttachmentError, attachmentLimits, attachmentLimitText } from './attachments.js';
 
 const identity = z.string().uuid();
+const planRequestSchema = z
+  .object({ id: identity, sessionId: identity, action: planActionSchema })
+  .strict();
 const draftIdentity = z.object({
   clientId: identity,
   version: z.number().int().nonnegative().safe(),
@@ -88,7 +97,10 @@ export class WebUI {
   private broadcastTimer?: NodeJS.Timeout;
   private heartbeat?: NodeJS.Timeout;
   private assets = new Map<string, { data: Buffer; type: string }>();
-  private requests = new Map<string, { input: string; result: Promise<CommandResult> }>();
+  private requests = new Map<
+    string,
+    { input: string; result: Promise<CommandResult | PlanActionResult> }
+  >();
   private server = createServer((request, response) => {
     void this.handle(request, response).catch((error) => {
       if (response.destroyed) return;
@@ -337,6 +349,37 @@ export class WebUI {
         200,
         complete(room.config.workspace, room.enabledNames(), input.value, input.cursor),
       );
+      return;
+    }
+    if (path === '/api/plan') {
+      const input = planRequestSchema.parse(data);
+      const serialized = createHash('sha256')
+        .update('plan:' + JSON.stringify(input))
+        .digest('hex');
+      let entry = this.requests.get(input.id);
+      if (entry && entry.input !== serialized)
+        throw new HttpError(409, 'Request ID was already used for different input');
+      if (!entry) {
+        if (this.requests.size >= 10000)
+          throw new HttpError(429, 'This launch has reached 10,000 commands; restart to continue.');
+        const result = this.controller.planAction(input.action, input.sessionId).then(
+          (message): PlanActionResult => ({
+            ok: true,
+            sessionId: input.sessionId,
+            messageId: message.id,
+          }),
+          (error): PlanActionResult => ({
+            ok: false,
+            sessionId: this.controller.room.session.id,
+            error: String(error.message ?? error),
+            conflict:
+              error instanceof PlanConflictError || error instanceof ConversationChangedError,
+          }),
+        );
+        entry = { input: serialized, result };
+        this.requests.set(input.id, entry);
+      }
+      json(response, 200, await entry.result);
       return;
     }
     if (path === '/api/command') {

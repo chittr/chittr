@@ -238,7 +238,7 @@ export class Wire extends EventEmitter {
     return {};
   }
   complete(
-    value = {
+    value: { outcomes: import('../src/types.js').Outcome[] } = {
       outcomes: [{ kind: 'pass', text: 'Done', recipients: [], messageIds: ['m2'] }],
     },
   ) {

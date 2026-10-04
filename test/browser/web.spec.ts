@@ -2399,3 +2399,125 @@ test('images: staged warnings show one line per affected recipient with collapse
   await expect(page.locator('.agent-image-status, .participant-image-reason')).toHaveCount(0);
   await expect(page.locator('.sidebar')).not.toContainText('Initial images');
 });
+
+test('maintains a plan beside chat with selective agreement, sources and independent drafts', async ({
+  page,
+}) => {
+  const chat = page.getByRole('textbox', { name: 'Message', exact: true });
+  await chat.fill('Unsent chat draft');
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  const pane = page.getByRole('complementary', { name: 'Conversation plan' });
+  await pane.getByRole('button', { name: 'Enable planning focus' }).click();
+  await pane.getByRole('textbox', { name: 'Plan text', exact: true }).fill('Use a cache.');
+  await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
+  await expect(pane.getByRole('article', { name: 'p1', exact: true })).toContainText(
+    'Use a cache.',
+  );
+  await expect(chat).toHaveValue('Unsent chat draft');
+  await chat.fill('@codex @claude [plan-proposal]');
+  await chat.press('Enter');
+  await expect(
+    pane.getByRole('region', { name: 'Pending plan proposals' }).getByRole('article'),
+  ).toHaveCount(2);
+  const proposals = (await state(page)).session.plan!.proposals;
+  const selected = proposals.find((p) => p.author === 'codex')!;
+  await pane
+    .getByRole('article', { name: selected.id, exact: true })
+    .getByRole('button', { name: 'Adopt and agree' })
+    .click();
+  const agreed = pane.getByRole('article', { name: 'p1', exact: true });
+  await expect(agreed).toContainText('p1@2 · agreed');
+  await expect(agreed).toContainText('Use a small LRU cache.');
+  await expect(pane.getByRole('region', { name: 'Pending plan proposals' })).toContainText('stale');
+  await pane.getByLabel('Category', { exact: true }).selectOption('objection');
+  await pane
+    .getByRole('textbox', { name: 'Plan text', exact: true })
+    .fill('Eviction may lose work.');
+  await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
+  await expect(pane.getByRole('article', { name: 'p2', exact: true })).toBeVisible();
+  const before = await state(page);
+  await pane.getByRole('button', { name: 'Agree to plan', exact: true }).click();
+  await expect(pane).toContainText('Whole-plan agreement is current.');
+  const after = await state(page);
+  expect(after.session.plan!.entries.find((e) => e.id === 'p2')!.status).toBe('open');
+  expect(after.agents.map((a) => a.active)).toEqual(before.agents.map((a) => a.active));
+  await agreed.getByRole('button', { name: 'Comment', exact: true }).click();
+  await pane
+    .getByRole('textbox', { name: 'Plan text', exact: true })
+    .fill('@human Keep this revision link.');
+  await pane.getByRole('button', { name: 'Send section comment' }).click();
+  await expect(agreed).toContainText('Comment on revision 2');
+  await agreed.getByRole('button', { name: 'Edit', exact: true }).click();
+  await pane.getByRole('textbox', { name: 'Plan text', exact: true }).fill('A different cache.');
+  await pane.getByRole('button', { name: 'Save proposed revision' }).click();
+  await expect(agreed).toContainText('p1@3 · proposed');
+  await expect(agreed).toContainText('Comment on revision 2');
+  await pane
+    .getByRole('button', { name: '#' + after.session.plan!.agreement!.messageId, exact: true })
+    .click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByText('Exact plan action evidence', { exact: true }).click();
+  await expect(dialog).toContainText('Use a small LRU cache.');
+  await page.keyboard.press('Escape');
+  await pane.getByRole('textbox', { name: 'Plan text', exact: true }).fill('Unsent plan draft');
+  await chat.fill('Another chat draft');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(pane).toBeVisible();
+  await expect(chat).toBeHidden();
+  await pane.getByRole('button', { name: 'Back to chat' }).click();
+  await expect(chat).toHaveValue('Another chat draft');
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  await expect(pane.getByRole('textbox', { name: 'Plan text', exact: true })).toHaveValue(
+    'Unsent plan draft',
+  );
+});
+
+test('retries a lost plan acknowledgement with the same identity and preserves a conflicting editor', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  const pane = page.getByRole('complementary', { name: 'Conversation plan' });
+  let requestId = '';
+  await page.route('**/api/plan', async (route) => {
+    requestId = route.request().postDataJSON().id;
+    await route.fetch();
+    await route.abort();
+    await page.unroute('**/api/plan');
+  });
+  await pane.getByRole('textbox', { name: 'Plan text', exact: true }).fill('Saved once');
+  await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
+  await expect(pane.getByRole('button', { name: 'Check plan request' })).toBeEnabled();
+  const requests: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().endsWith('/api/plan')) requests.push(r.postDataJSON().id);
+  });
+  await pane.getByRole('button', { name: 'Check plan request' }).click();
+  await expect(pane.getByRole('button', { name: 'Check plan request' })).toHaveCount(0);
+  expect(requests).toEqual([requestId]);
+  expect((await state(page)).session.plan!.entries).toHaveLength(1);
+  const entry = pane.getByRole('article', { name: 'p1', exact: true });
+  await entry.getByRole('button', { name: 'Edit', exact: true }).click();
+  await pane.getByRole('textbox', { name: 'Plan text', exact: true }).fill('My unsaved revision');
+  const snapshot = await state(page);
+  await page.request.post('/api/plan', {
+    headers: await authHeaders(page),
+    data: {
+      id: crypto.randomUUID(),
+      sessionId: snapshot.session.id,
+      action: {
+        kind: 'edit',
+        entryId: 'p1',
+        revision: 1,
+        markdown: 'Changed elsewhere',
+        sourceIds: [],
+      },
+    },
+  });
+  await expect(entry).toContainText('p1@2');
+  await pane.getByRole('button', { name: 'Save proposed revision' }).click();
+  await expect(pane.getByRole('alert')).toContainText('changed');
+  await expect(pane.getByRole('textbox', { name: 'Plan text', exact: true })).toHaveValue(
+    'My unsaved revision',
+  );
+  expect((await state(page)).session.plan!.entries[0]!.markdown).toBe('Changed elsewhere');
+});

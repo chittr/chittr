@@ -1258,3 +1258,60 @@ it('adapter contract: drops retired callbacks and outcomes resolved after abort'
   callback({ type: 'activity', activity: 'working', detail: 'Retired activity' });
   expect(room.session.agents.a).toEqual(before);
 });
+
+it('compacts an agreement at admitted capacity and restores the exact plan on subsequent turns', async () => {
+  const { room, adapters } = setup();
+  await room.start();
+  room.pause();
+  room.planAction({
+    kind: 'add',
+    category: 'approach',
+    markdown: 'x'.repeat(58000),
+    sourceIds: [],
+  });
+  room.planAction({ kind: 'agree-all', revision: room.session.plan!.revision });
+  const plan = structuredClone(room.session.plan);
+  const agreement = structuredClone(room.session.messages.at(-1));
+  room.compact('a');
+  await idle(room);
+  expect(room.session.agents.a!.maintenance?.status).toBe('completed');
+  expect(room.session.plan).toEqual(plan);
+  expect(room.session.messages[1]).toEqual(agreement);
+  room.send('@a Continue discussion');
+  await room.continue();
+  await tick();
+  await idle(room);
+  const input = adapters.flatMap((a) => a.inputs).at(-1)!;
+  expect(input.plan!.entries[0]!.markdown).toBe('x'.repeat(58000));
+  expect(input.plan!.agreement?.current).toBe(true);
+  expect(checkpointChunks(room.session.messages.slice(0, 2), []).flat()).toHaveLength(2);
+});
+
+it('refuses a combined recovery prompt above the limit and retains the prior plan and native reference', async () => {
+  const { room, adapters } = setup({
+    configure: (a, i) => {
+      if (i === 3) a.holdMaintenance = true;
+    },
+  });
+  await room.start();
+  room.pause();
+  room.planAction({
+    kind: 'add',
+    category: 'approach',
+    markdown: 'x'.repeat(58000),
+    sourceIds: [],
+  });
+  const plan = structuredClone(room.session.plan);
+  const reference = room.session.agents.a!.sessionId;
+  room.compact('a');
+  await tick();
+  room.send('@a ' + 'y'.repeat(45000));
+  room.send('@a ' + 'z'.repeat(45000));
+  adapters[3]!.release!();
+  await idle(room);
+  expect(room.session.agents.a!.maintenance?.status).toBe('failed');
+  expect(room.session.agents.a!.maintenance?.detail).toContain('total');
+  expect(room.session.agents.a!.maintenance?.detail).toContain('plan');
+  expect(room.session.plan).toEqual(plan);
+  expect(room.session.agents.a!.sessionId).toBe(reference);
+});

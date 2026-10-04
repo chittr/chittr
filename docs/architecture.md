@@ -50,6 +50,30 @@ exact transcript.
 These record existing choices. They do not require a new command registry,
 controller encapsulation, a shared adapter base class or a storage redesign.
 
+## Conversation plan
+
+`src/plan-types.ts` defines plan entries, proposals, references and typed public
+actions. `src/plan.ts` validates metadata and applies transitions to unsaved
+candidates. `Session.plan` owns the bounded current record; public messages own
+frozen agreements, adopted/rejected proposal evidence and withdrawn content.
+Monotonic entry/proposal counters never reuse an archived ID. Saved-data
+validation reconstructs current plan state from typed public evidence and
+rejects inconsistencies before legacy normalization writes.
+
+`Room.planAction` and complete agent results save validated candidates before
+publication. Human plan actions have roots/exchanges but empty deliveries and
+no scheduling call. Section comments retain ordinary routing. The controller
+serializes terminal commands and typed browser actions with conversation guards.
+The browser plan endpoint shares command-ID receipts and authentication, while
+its pane keeps editor drafts and pending requests separate from the composer.
+
+`src/plan-view.ts` derives the browser-safe projection, proposal staleness, room
+question status and byte usage. `RoomSnapshot.session.plan` drives the pane,
+terminal status and transient views. Normal turns get a detached plan view from
+the same instant as public history. Shared protocol instructions describe
+contributions and human authority; dynamic plan content never enters fingerprints
+or custom instructions. Compaction/recovery's next-turn bound includes the view.
+
 ## Runtime map
 
 ```mermaid

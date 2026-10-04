@@ -94,6 +94,10 @@ export function publicMessage({
   finalAnswer,
   recommendation,
   attachments,
+  planAction,
+  planContribution,
+  planReference,
+  createdAt,
 }: Message) {
   return {
     id,
@@ -105,6 +109,9 @@ export function publicMessage({
     consultation,
     finalAnswer,
     recommendation,
+    ...(planAction ? { planAction, createdAt } : {}),
+    ...(planContribution ? { planContribution } : {}),
+    ...(planReference ? { planReference } : {}),
     ...(attachments?.length
       ? {
           attachments: attachments.map(({ id, filename, mediaType, byteSize, width, height }) => ({

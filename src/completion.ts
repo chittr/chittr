@@ -20,6 +20,8 @@ export const commands = [
   '/pin',
   '/unpin',
   '/pins',
+  '/plan',
+  '/message',
   '/reconnect',
   '/compact',
   '/checkpoint',
@@ -41,7 +43,29 @@ export function complete(
   const { token, start, prefix } = completionContext(value, cursor);
   let suggestions: string[] = [];
   let files: FileCompletion | undefined;
-  if (token.startsWith('@'))
+  if (/^\/plan\s+\S*$/.test(value.slice(0, cursor)))
+    suggestions = [
+      'off',
+      'show',
+      'add',
+      'edit',
+      'withdraw',
+      'agree',
+      'agree-all',
+      'adopt',
+      'adopt-agree',
+      'reject',
+      'resolve',
+      'reopen',
+      'comment',
+    ]
+      .filter((s) => s.startsWith(token))
+      .map((s) => s + ' ');
+  else if (/^\/plan\s+add\s+\S*$/.test(value.slice(0, cursor)))
+    suggestions = ['approach', 'objection', 'question']
+      .filter((s) => s.startsWith(token))
+      .map((s) => s + ' ');
+  else if (token.startsWith('@'))
     suggestions = ['human', ...names]
       .filter((name) => name.startsWith(token.slice(1)))
       .map((name) => '@' + name + ' ');

@@ -1,3 +1,5 @@
+import { PlanPane } from './plan-pane';
+import type { PlanReference } from '../src/plan-types.js';
 import { QuestionContext, type QuestionDraft } from './question-card';
 import {
   useEffect,
@@ -35,13 +37,19 @@ type Completion = CompletionResult & { end: number; selected: number; loading?: 
 type SavedSession = { id: string; updatedAt: string; preview: string; count: number };
 
 function App() {
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planSource, setPlanSource] = useState<string>();
   // The composer owns recoverable state and its transitions; this component renders it,
   // routes intentions, and keeps connection, history, completion, focus and scroll.
   const [composer] = useState(
     () =>
       new ComposerController(
         {
-          command: (request) => api<CommandResult>('command', request),
+          command: async (request) => {
+            const result = await api<CommandResult>('command', request);
+            if (result.ok && /^\/plan\s*$/.test(request.line)) setPlanOpen(true);
+            return result;
+          },
           state: () => api<WebState>('state'),
           saveDraft: (update, keepalive) => api('draft', update, keepalive),
           upload: uploadImage,
@@ -94,6 +102,8 @@ function App() {
             history.current.reset();
             setViewing(undefined);
             setPinsOpen(false);
+            setPlanSource(undefined);
+            setPlanOpen(!!event.state.session.plan);
             setQuestionsOpen(false);
             completionRequest.current++;
             setCompletion(undefined);
@@ -199,7 +209,42 @@ function App() {
   const live = connection === 'live';
   const command = (line: string) => void composer.command(line, live);
   const send = () => {
+    if (/^\/plan\s+show\s*$/.test(composer.text)) {
+      if (images.attachments.length) {
+        composer.report('Plan viewing does not send staged images.');
+        return;
+      }
+      setPlanOpen(true);
+      changeDraft('');
+      return;
+    }
+    const exact = /^\/message\s+#?(m[1-9]\d*)\s*$/.exec(composer.text);
+    if (exact) {
+      if (!state?.session.messages.some((m) => m.id === exact[1])) {
+        composer.report('Unknown public message');
+        return;
+      }
+      if (images.attachments.length) {
+        composer.report('Message viewing does not send staged images.');
+        return;
+      }
+      setPlanSource(exact[1]);
+      changeDraft('');
+      return;
+    }
     if (composer.submit(live)) dismissCompletion();
+  };
+  const openPlanEntry = (reference: PlanReference) => {
+    if (
+      state?.session.plan?.entries.some(
+        (e) => e.id === reference.entryId && e.revision === reference.revision,
+      )
+    ) {
+      setPlanOpen(true);
+      requestAnimationFrame(() =>
+        document.getElementById('plan-' + reference.entryId)?.scrollIntoView({ block: 'center' }),
+      );
+    } else setPlanSource(reference.messageId);
   };
   const accept = (choice: string, candidate = completion, directory = false) => {
     if (!candidate) return;
@@ -400,7 +445,7 @@ function App() {
     setQuestionDrafts((old) => ({ ...old, [key]: value }));
   };
   const content = (
-    <div className="app-shell">
+    <div className={`app-shell ${planOpen ? 'plan-open' : ''}`}>
       <aside className="sidebar">
         <a className="brand" href="/" onClick={(event) => event.preventDefault()}>
           <img src="/favicon.svg" alt="" />
@@ -519,6 +564,9 @@ function App() {
             </h1>
           </div>
           <div className="room-controls">
+            <button disabled={!state} onClick={() => setPlanOpen(true)}>
+              Plan
+            </button>
             <button disabled={!state} onClick={() => setQuestionsOpen(true)}>
               Unanswered questions ({questions.length})
             </button>
@@ -701,6 +749,10 @@ function App() {
                   providers={providers}
                   command={command}
                   reply={selectReply}
+                  planEntry={openPlanEntry}
+                  planLinks={state!.session.plan?.entries
+                    .filter((e) => e.roomQuestionId === entry.item.id)
+                    .map((e) => ({ entryId: e.id, revision: e.revision, messageId: e.messageId }))}
                   pinned={entry.pinned}
                   disabled={disabled}
                 />
@@ -1131,6 +1183,43 @@ function App() {
           )}
         </footer>
       </main>
+      {state && (
+        <PlanPane
+          key={state.session.id}
+          view={state.session.plan}
+          messages={state.session.messages}
+          sessionId={state.session.id}
+          instanceId={state.instanceId}
+          live={live && !state.fatal}
+          open={planOpen}
+          close={() => setPlanOpen(false)}
+          source={setPlanSource}
+          refresh={async () => {
+            composer.accept(await api<WebState>('state'));
+          }}
+        />
+      )}
+      {planSource && state && (
+        <Dialog title={'Public message #' + planSource} close={() => setPlanSource(undefined)}>
+          {state.session.messages
+            .filter((m) => m.id === planSource)
+            .map((message) => (
+              <MessageCard
+                key={message.id}
+                message={message}
+                sessionId={state.session.id}
+                view={setViewing}
+                humanName={humanName}
+                providers={providers}
+                command={command}
+                reply={selectReply}
+                pinned={state.session.pinnedMessageIds.includes(message.id)}
+                disabled={disabled}
+                planEntry={openPlanEntry}
+              />
+            ))}
+        </Dialog>
+      )}
       {viewing && state && (
         <ImageViewer
           key={`${state.session.id}:${viewing.id}`}

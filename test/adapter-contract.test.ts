@@ -536,3 +536,72 @@ it('accepts the conformance fake and rejects a fresh-start restoration mutation 
   mutant.start = async () => ({ sessionId: 'fake', restored: true });
   await expect(lifecycle(mutant, () => mutant, fixture().input)).rejects.toThrow();
 });
+
+it.each(providers)(
+  'carries exact plan data and optional contributions through the %s shared transport',
+  async (provider) => {
+    const f = fixture();
+    const { planView } = await import('../src/plan-view.js');
+    f.input.plan = planView(
+      {
+        focus: false,
+        revision: 1,
+        nextEntry: 2,
+        nextProposal: 1,
+        entries: [
+          {
+            id: 'p1',
+            revision: 1,
+            category: 'approach',
+            markdown: 'Exact shared plan marker',
+            author: 'human',
+            sourceIds: ['m1'],
+            messageId: 'm1',
+            status: 'proposed',
+          },
+        ],
+        proposals: [],
+      },
+      f.input.history!,
+    );
+    const { adapter, wire } = await connected(provider, f);
+    const result = adapter.run(f.input, () => {}, new AbortController().signal);
+    await vi.waitFor(() => {
+      wire.receipt();
+      expect(JSON.stringify(wire.sent)).toContain('Exact shared plan marker');
+    });
+    const plan = {
+      kind: 'revise' as const,
+      category: null,
+      entryId: 'p1',
+      baseRevision: 1,
+      markdown: 'Revised shared plan marker',
+      sourceIds: ['m1'],
+      roomQuestionId: null,
+    };
+    wire.complete({
+      outcomes: [
+        {
+          kind: 'reply',
+          text: 'Proposed revision',
+          recipients: ['human'],
+          messageIds: ['m2'],
+          plan,
+        },
+      ],
+    });
+    expect((await result).outcomes[0]!.plan).toEqual(plan);
+    const events: AdapterEvent[] = [];
+    const ordinary = adapter.run(
+      { ...f.input, plan: undefined },
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      wire.receipt();
+      expect(events).toContainEqual({ type: 'received' });
+    });
+    wire.complete();
+    expect((await ordinary).outcomes[0]!.plan).toBeUndefined();
+  },
+);

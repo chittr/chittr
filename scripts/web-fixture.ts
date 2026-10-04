@@ -94,6 +94,24 @@ const adapter = (id: string): AgentAdapter => ({
         ),
       };
     }
+    if (input.messages.some((m) => m.text.includes('[plan-proposal]')))
+      return {
+        outcomes: input.messages.map((m) => ({
+          kind: 'reply' as const,
+          text: `${id} proposes a revision`,
+          recipients: ['human'],
+          messageIds: [m.id],
+          plan: {
+            kind: 'revise' as const,
+            category: null,
+            entryId: 'p1',
+            baseRevision: 1,
+            markdown: id === 'codex' ? 'Use a small LRU cache.' : 'Use a bounded map.',
+            sourceIds: [],
+            roomQuestionId: null,
+          },
+        })),
+      };
     const pass = input.messages.some((message) => message.text.includes('[pass]'));
     if (input.messages.some((message) => message.text.includes('[question]')))
       return {

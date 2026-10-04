@@ -35,7 +35,7 @@ it('supplies the strict Codex schema and normalizes nullable optional fields', a
       awaitingHuman: false,
     };
     expect(validate({ outcomes: [outcome] }).valid).toBe(false);
-    const wire = { outcomes: [{ ...outcome, question: null, recommendation: null }] };
+    const wire = { outcomes: [{ ...outcome, question: null, recommendation: null, plan: null }] };
     expect(validate(wire).valid).toBe(true);
     expect(parseOutcomes(wire)).toEqual([outcome]);
     expect(parseOutcomes({ outcomes: [outcome] })).toEqual([outcome]);
@@ -49,6 +49,7 @@ it('supplies the strict Codex schema and normalizes nullable optional fields', a
         text: 'Which?',
         awaitingHuman: true,
         recommendation: null,
+        plan: null,
         question: {
           prompt: 'Which implementation should we start with?',
           intent: 'decision',
@@ -59,7 +60,7 @@ it('supplies the strict Codex schema and normalizes nullable optional fields', a
   };
   expect(validate(question).valid).toBe(true);
   expect(parseOutcomes(question)).toEqual(
-    question.outcomes.map(({ recommendation, ...outcome }) => outcome),
+    question.outcomes.map(({ recommendation, plan, ...outcome }) => outcome),
   );
 });
 it('includes the exact older reply target even when it is outside the incremental context', () => {

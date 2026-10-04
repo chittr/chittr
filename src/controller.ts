@@ -17,6 +17,8 @@ import { formatContextUsage } from './context-usage.js';
 import { questionDetails } from './questions.js';
 import { projectRoom, providerDefault, type RoomSnapshot } from './snapshot.js';
 import { parseReplyDraft } from './reply.js';
+import { parsePlanCommand } from './plan-command.js';
+import type { PlanAction } from './plan-types.js';
 
 /** A queued action refused because the selected conversation is no longer the one it named. */
 export class ConversationChangedError extends Error {
@@ -114,6 +116,9 @@ export class RoomController extends EventEmitter {
   }
   updateDraft(value: string | DraftUpdate, sessionId: string) {
     return this.enqueue(() => this.room.saveDraft(value), sessionId);
+  }
+  planAction(action: PlanAction, sessionId: string) {
+    return this.enqueue(() => this.room.planAction(action), sessionId);
   }
   /**
    * Submit composer intent and report a typed outcome. The controller owns operation
@@ -359,7 +364,12 @@ export class RoomController extends EventEmitter {
       else await this.room.continue(target);
       return;
     }
-    if (command === '/reply') {
+    if (command === '/plan') {
+      const action = parsePlanCommand(line);
+      if (action === 'show')
+        throw new Error('/plan show is a local view; open it in the terminal or browser.');
+      this.room.planAction(action);
+    } else if (command === '/reply') {
       const reply = parseReplyDraft(line);
       if (!reply.replyTo || (!reply.text.trim() && !hasAttachments))
         throw new Error('Usage: /reply #message-id [@agent ...] message');

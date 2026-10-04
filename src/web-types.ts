@@ -1,5 +1,19 @@
 import type { AttachmentMetadata } from './types.js';
 import type { RoomSnapshot } from './snapshot.js';
+import type { PlanAction } from './plan-types.js';
+
+export interface WebPlanAction {
+  id: string;
+  sessionId: string;
+  action: PlanAction;
+}
+export interface PlanActionResult {
+  ok: boolean;
+  sessionId: string;
+  messageId?: string;
+  error?: string;
+  conflict?: boolean;
+}
 
 /** The browser wire state: the public display projection plus transport metadata. */
 export type WebState = RoomSnapshot & { instanceId: string; revision: number };

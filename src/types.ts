@@ -1,4 +1,12 @@
 import type { Provider } from './providers.js';
+import type {
+  Plan,
+  PlanActionRecord,
+  PlanContribution,
+  PlanContributionRecord,
+  PlanReference,
+  PlanView,
+} from './plan-types.js';
 export type { Provider } from './providers.js';
 export interface SkillAccess {
   path: string;
@@ -103,6 +111,9 @@ export interface Message {
   attachments?: AttachmentMetadata[];
   /** Present only on attachment-aware human sends. */
   attachmentOperation?: AttachmentSendOperation;
+  planAction?: PlanActionRecord;
+  planContribution?: PlanContributionRecord;
+  planReference?: PlanReference;
 }
 export interface Outcome {
   messageIds: string[];
@@ -112,6 +123,7 @@ export interface Outcome {
   awaitingHuman?: boolean;
   question?: { prompt: string; intent: 'decision' | 'free-text'; choices: string[] };
   recommendation?: Recommendation;
+  plan?: PlanContribution;
 }
 export interface TurnResult {
   outcomes: Outcome[];
@@ -136,6 +148,7 @@ export interface TurnInput {
   humanName?: string;
   summary?: string;
   history?: Message[];
+  plan?: PlanView;
 }
 export interface MaintenanceRequest {
   id: string;
@@ -284,6 +297,7 @@ export interface Session {
   commandMode?: CommandMode;
   configSources: string[];
   launchBrief?: LaunchBrief;
+  plan?: Plan;
   composerDraft?: string;
   composerAttachments?: AttachmentMetadata[];
   composerDraftRevision?: number;

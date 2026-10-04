@@ -392,3 +392,39 @@ rather than recording it: [architecture](architecture.md) named the retained
 diagnostic file `invalid-auxiliary-<id>.json` while the code uses a random UUID
 (`src/store.ts:217`). That line now reads `invalid-auxiliary-<uuid>.json`. It was
 a documentation error, not a behavior gap, so nothing about it remains open.
+
+## Plan records
+
+An absent `Session.plan` is valid for older version-1 sessions. A present plan
+contains focus, a plan revision, monotonic never-reused entry/proposal counters,
+current entries, pending proposals and the latest whole-plan agreement reference.
+Current entries keep only their applicable agreement marker. Withdrawn entry
+content, older agreements and completed proposal dispositions stay in typed
+public messages rather than accumulate in the live record.
+
+`Message.planAction` is human-authored, with its own human root/exchange and
+empty deliveries. It records the action, affected IDs/revisions, frozen entries
+where needed, proposal source locators, outstanding work, human attribution and
+public message time. `Message.planContribution` retains the agent's validated
+flat input plus host-assigned status and references. Ordinary section comments
+carry `planReference`, which includes the exact revision and its public source
+message locator. These records survive public-history projection and exact
+history lookup; they do not grant permissions or synthesize question answers.
+
+`validatePlanHistory` validates these structures and reconstructs current state
+from their ordered evidence. It checks sources, known revisions, agreement and
+disposition evidence, archived references, action authority, counters and current
+state consistency. Any failure is a core plan-specific saved-data error.
+`SessionStore.load` runs it before legacy question normalization or auxiliary
+recovery writes, leaving invalid saved bytes untouched. `save` validates before
+writing as well. New conversations have no plan; switching restores only the
+destination's plan. No downgrade guarantee is added.
+
+Plan actions and whole agent results build a candidate, validate it and use the
+existing synchronous atomic save before publication. Save failure leaves the
+previous plan public and holds dispatch. Limits are 8 KiB per agent metadata,
+64 KiB each for the live record and complete current view, and 80 KiB per
+serialized public human action. Admission reserves bounded bookkeeping space
+for later agreement, resolution, rejection, withdrawal and smaller edits. These
+UTF-8 limits are independent of compaction/recovery's 128 KiB complete next-turn
+bound. A plan overflow never evicts evidence or unresolved work automatically.

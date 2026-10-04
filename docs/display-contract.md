@@ -27,8 +27,8 @@ The public declarations are the exported types and function signatures of
 
 `room` is a `RoomSource`: the structural surface `Room` satisfies (`config`,
 `session`, `fatal`, `isIdle()`, `pending(id)`, `initialImageSupport(id)`). The
-module imports no engine code; its runtime dependencies are `command-access.ts`
-and `participant-status.ts`, so browser code can import it.
+module imports no engine code; its runtime dependencies are `command-access.ts`,
+`participant-status.ts` and `plan-view.ts`, so browser code can import it.
 
 The narrow reads never project, never derive per-agent status, pending counts or
 image support, and never traverse history. Read them where the fact is used, so
@@ -78,7 +78,7 @@ and `revision`, which `WebState` adds on top.
 `session`: `id`, `createdAt`, `paused`, optional `recoveryRequired`,
 `composerDraft` (`''` when unset), `composerAttachments` (`[]` when unset),
 `composerDraftRevision` (`0` when unset), `messages`, `pinnedMessageIds` (`[]`
-when unset), `notices`, `exchanges`, and the latest `checkpoint` when one exists.
+when unset), `notices`, `exchanges`, the latest `checkpoint` when one exists, and optional `plan`.
 
 Attachment metadata on messages and in `composerAttachments` is display data:
 an opaque host id, a filename that is never a path, media type, byte size and
@@ -237,3 +237,30 @@ behind a collapsed **Details** control, and the terminal points to
 `/attach --status`, which prints them through `formatImageRecipientStatus`.
 `/participants` lists every agent's report. The browser sidebar and agent cards
 show no image status.
+
+## Plan projection and public evidence
+
+`session.plan` is absent until a plan exists. It contains focus and optional
+focus guidance, plan revision, current entries, pending proposals, the latest
+whole-plan agreement with its derived `current` flag, and UTF-8 byte counts.
+Entries expose IDs, revisions, category, Markdown, author, sources, current
+status and applicable agreement message IDs. Linked room questions carry a
+derived answered/unanswered status, independent of plan resolution. Proposal
+status is pending, stale or not-applicable, derived from its base revision and
+whether its entry remains live. `src/plan-types.ts` declares all fields.
+
+The view and its entry/proposal objects are fresh; nested source arrays and
+proposal target objects are borrowed. Renderers must not mutate them. A normal
+turn deep-clones its view separately. `planSummary` and `planText` provide the
+terminal's compact status and full view. `planDocument(snapshot, width, target)`
+opens a current plan or exact public message transiently without writing notices.
+
+Messages may carry `planAction`, `planContribution` and/or `planReference`.
+Action messages render a short human-action label with expandable exact evidence;
+they have no deliveries. Contributions retain the complete validated metadata,
+host reference and result, including a visible capacity refusal. Comments use
+ordinary message text with an immutable entry/revision/message locator. Source
+links open the same public message rendering, including archived evidence.
+The browser pane retains its draft and revision guard while snapshots refresh;
+its requests never use the composer's pending slot. Narrow layouts hide the
+conversation visually while keeping both editors mounted.

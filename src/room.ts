@@ -36,6 +36,14 @@ import { createAdapter } from './adapters/index.js';
 import { errorText } from './process.js';
 import { commandMode, commandAccessSummary } from './command-access.js';
 import type { ImagePathSupport } from './image-support.js';
+import {
+  applyPlanAction,
+  applyPlanContribution,
+  planActionSchema,
+  validatePlanHistory,
+} from './plan.js';
+import { planBytes, planView } from './plan-view.js';
+import type { PlanAction } from './plan-types.js';
 import { resolveMessageRecipients } from './recipient-resolution.js';
 export { parseAddress } from './recipient-resolution.js';
 interface MaintenanceOperation {
@@ -529,6 +537,45 @@ export class Room extends EventEmitter {
     this.schedule();
     return message;
   }
+  /** Save before publication, retaining objects held by active turns. */
+  private commitPlanCandidate(candidate: Session): void {
+    validatePlanHistory(candidate);
+    try {
+      this.persistence.save(candidate);
+    } catch (error) {
+      this.fatal = `Session could not be saved: ${errorText(error)}. Work is paused.`;
+      this.session.paused = true;
+      this.emit('change');
+      throw error;
+    }
+    this.session.plan = candidate.plan;
+    for (let i = 0; i < candidate.messages.length; i++) {
+      if (this.session.messages[i]) Object.assign(this.session.messages[i]!, candidate.messages[i]);
+      else this.session.messages.push(candidate.messages[i]!);
+    }
+    this.session.exchanges = candidate.exchanges;
+    this.session.updatedAt = candidate.updatedAt;
+  }
+  planAction(input: PlanAction): Message {
+    if (this.closed || this.fatal) throw new Error(this.fatal ?? 'Room is closed');
+    const action = planActionSchema.parse(input);
+    const candidate = structuredClone(this.session);
+    let message: Message;
+    if (action.kind === 'comment') {
+      const resolved = resolveMessageRecipients(
+        action.text,
+        this.enabledNames(),
+        candidate.messages,
+      );
+      message = this.appendTo(candidate, 'human', resolved.text, [...resolved.recipients], []);
+    } else message = this.appendTo(candidate, 'human', 'Plan action', [], []);
+    candidate.exchanges[message.id] = { used: 0, allowance: this.config.followUpTurns };
+    applyPlanAction(candidate, action, message, this.config.humanName ?? 'You');
+    this.commitPlanCandidate(candidate);
+    this.emit('change');
+    if (action.kind === 'comment') this.schedule();
+    return this.message(message.id)!;
+  }
   unansweredQuestions(): Message[] {
     return unansweredQuestions(this.session.messages);
   }
@@ -850,6 +897,7 @@ export class Room extends EventEmitter {
       history: structuredClone(this.session.messages),
       participants: this.enabledNames(),
       humanName: this.config.humanName ?? 'You',
+      plan: structuredClone(planView(this.session.plan, this.session.messages)),
     };
     // schedule() already failed unsupported images for this recipient, so an
     // image reaching dispatch with a closed gate is an invariant failure. It must
@@ -868,17 +916,24 @@ export class Room extends EventEmitter {
           throw new Error('Interrupted');
         const outcomes = result.outcomes.map(normalizeOutcome);
         this.validateOutcomes(outcomes, attempt.messageIds, id);
-        // Validate the complete result before publishing any message or marking outcomes.
+        // Simulate the complete ordered result before any reply or plan change is public.
+        const candidate = structuredClone(this.session);
         for (const outcome of outcomes) {
-          if (outcome.kind === 'pass')
+          if (outcome.kind === 'pass') {
             for (const messageId of outcome.messageIds)
-              this.message(messageId)!.deliveries[id] = {
+              candidate.messages.find((m) => m.id === messageId)!.deliveries[id] = {
                 status: 'passed',
                 attemptId: attempt.id,
                 rationale: outcome.text,
               };
-          else {
-            const reply = this.append(id, outcome.text, outcome.recipients, outcome.messageIds);
+          } else {
+            const reply = this.appendTo(
+              candidate,
+              id,
+              outcome.text,
+              outcome.recipients,
+              outcome.messageIds,
+            );
             if (outcome.question) reply.question = structuredClone(outcome.question);
             if (outcome.recommendation)
               reply.recommendation = {
@@ -888,14 +943,16 @@ export class Room extends EventEmitter {
                     ? reply.id
                     : outcome.recommendation.questionId,
               };
+            if (outcome.plan) applyPlanContribution(candidate, outcome.plan, reply, turn.history);
             for (const messageId of outcome.messageIds)
-              this.message(messageId)!.deliveries[id] = {
+              candidate.messages.find((m) => m.id === messageId)!.deliveries[id] = {
                 status: 'contributed',
                 attemptId: attempt.id,
                 responseIds: [reply.id],
               };
           }
         }
+        this.commitPlanCandidate(candidate);
         state.sessionId = result.sessionId ?? state.sessionId;
         state.contextThrough = contextThrough;
         state.draft = '';
@@ -904,7 +961,7 @@ export class Room extends EventEmitter {
         for (const message of batch)
           if (['sent', 'received'].includes(message.deliveries[id]?.status ?? ''))
             message.deliveries[id]!.status = controller.signal.aborted ? 'interrupted' : 'failed';
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !this.fatal) {
           state.connection = 'unavailable';
           state.error = errorText(e);
           this.notice(
@@ -943,6 +1000,8 @@ export class Room extends EventEmitter {
       const requests = outcome.messageIds
         .map((id) => this.message(id))
         .filter((m) => m?.consultation);
+      if (outcome.plan && (outcome.kind !== 'reply' || requests.length))
+        throw new Error('Passes and consultation outcomes cannot contribute to the plan');
       if (requests.length) {
         if (
           requests.length !== 1 ||
@@ -1302,18 +1361,24 @@ export class Room extends EventEmitter {
       const required = this.session.messages
         .filter((message) => message.deliveries[id]?.status === 'queued')
         .slice(0, 32);
-      bounded(
-        turnPrompt({
-          messages: required,
-          context: this.session.messages.filter(
-            (message) => message.sequence > through && !required.includes(message),
-          ),
-          history: this.session.messages,
-          participants: this.enabledNames(),
-        }),
-        contextBudgets.nextTurn,
-        'Next turn with exact required messages and reply targets',
-      );
+      const nextInput = {
+        messages: required,
+        context: this.session.messages.filter(
+          (message) => message.sequence > through && !required.includes(message),
+        ),
+        history: this.session.messages,
+        participants: this.enabledNames(),
+        humanName: this.config.humanName ?? 'You',
+        plan: planView(this.session.plan, this.session.messages),
+      };
+      const nextPrompt = turnPrompt(nextInput);
+      if (Buffer.byteLength(nextPrompt) > contextBudgets.nextTurn) {
+        const planSize = nextInput.plan ? planBytes(nextInput.plan) : 0;
+        const withoutPlan = Buffer.byteLength(turnPrompt({ ...nextInput, plan: undefined }));
+        throw new Error(
+          `Next turn with exact required messages and reply targets exceeds ${contextBudgets.nextTurn} bytes: total ${Buffer.byteLength(nextPrompt)}, plan ${planSize}, non-plan ${withoutPlan}. Context and plan retained; recovery hold remains. ${withoutPlan > contextBudgets.nextTurn ? 'Non-plan input already exceeds the limit; shrinking the plan alone cannot fix this.' : 'Shorten live entries or explicitly reject proposals/withdraw entries before retrying compaction or reconnect.'}`,
+        );
+      }
       // Save a candidate before touching the live provider reference or cursor.
       // No await separates validation, persistence and the in-memory commit.
       const candidate = structuredClone(this.session);

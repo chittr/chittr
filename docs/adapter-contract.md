@@ -34,7 +34,7 @@ messages are all present. A retained session needs no recovery seed.
 `TurnResult` contains `outcomes` and an optional `sessionId`. Each `Outcome`
 accounts for `messageIds`, with `kind: 'reply' | 'pass'`, `text`, and
 `recipients`. Optional fields include `awaitingHuman`, `question`,
-`recommendation`; their validation is the room protocol in
+`recommendation`, `plan`; their validation is the room protocol in
 [`src/protocol.ts`](../src/protocol.ts), not provider-specific parsing policy.
 Adapters parse structured provider output before returning it. A pass is an
 explicit disposition, not a provider error or missing response.
@@ -238,3 +238,34 @@ decision under #37. This contract work does not fix them.
 - Turn and compaction timeouts are per-adapter constants, not a shared definition.
 - Post-`close()` behavior is unspecified beyond repeated close, unavailable
   image paths and revoked old authority as checked by the suite.
+
+## Plan turn and outcome contract
+
+`TurnInput.plan`, when present, is the complete fixed plan projection captured
+with that turn's public history. `turnPrompt` labels it as conversation data.
+Focus off removes guidance but retains the view. Normal turns after resume,
+reload, reconnect and compaction receive it again. The plan is not custom
+instruction text and does not participate in provider fingerprints.
+
+A completed ordinary reply may have one flat `plan` contribution. Its fields are
+`kind` (`add`, `revise`, `comment`), nullable `category`, nullable `entryId`,
+nullable `baseRevision`, nullable `markdown`, `sourceIds`, and nullable
+`roomQuestionId`. Adds require a category and Markdown; revisions require an
+existing entry and known base revision; comments require that reference and use
+reply text with null Markdown. A question addition can use `roomQuestionId=self`
+when the same reply creates a room question. The host resolves that reference
+and assigns author, IDs and the introducing public message. Agents cannot assign
+agreement, state transitions or human authorship. Absent metadata is `plan:null`
+on the strict wire; legacy ordinary outcomes without the field still normalize.
+Passes, consultation outcomes and maintenance cannot contribute.
+
+All metadata, public sources and the complete ordered result are validated
+before publication. Unknown entries, impossible revisions, spoofed fields and
+metadata above 8 KiB reject the complete result. Valid proposals to an older
+revision remain stale; proposals to withdrawn entries remain public and not
+applicable. Capacity refusal leaves a valid reply public without applying its
+contribution. These states do not disconnect the provider. Public messages and
+`read_conversation` retain exact contribution and action evidence. Retrieve the
+referenced public message before relying on historical agreement. The shared
+scripted adapter tests exercise this transport for Codex, Claude, Grok and
+Antigravity; they do not establish live model behaviour.

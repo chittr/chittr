@@ -4,6 +4,7 @@ import { memo, useMemo, useState, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageImages } from './images';
+import type { PlanReference } from '../src/plan-types.js';
 import type { AttachmentMetadata, Message } from '../src/types.js';
 
 export function CopyButton({ text, label = 'Copy message' }: { text: string; label?: string }) {
@@ -103,6 +104,8 @@ export const MessageCard = memo(function MessageCard({
   reply,
   pinned,
   disabled,
+  planEntry,
+  planLinks,
 }: {
   message: Message;
   sessionId: string;
@@ -113,6 +116,8 @@ export const MessageCard = memo(function MessageCard({
   reply: (id: string) => void;
   pinned: boolean;
   disabled: boolean;
+  planEntry?: (reference: PlanReference) => void;
+  planLinks?: PlanReference[];
 }) {
   const human = message.author === 'human';
   return (
@@ -130,12 +135,14 @@ export const MessageCard = memo(function MessageCard({
         <div className="message-heading">
           <strong>{human ? humanName : message.author}</strong>
           <span className="message-route">
-            {message.recipients.length
-              ? 'to ' +
-                message.recipients
-                  .map((name) => (name === 'human' ? humanName : '@' + name))
-                  .join(', ')
-              : 'to everyone'}
+            {message.planAction
+              ? 'human plan action, no dispatch'
+              : message.recipients.length
+                ? 'to ' +
+                  message.recipients
+                    .map((name) => (name === 'human' ? humanName : '@' + name))
+                    .join(', ')
+                : 'to everyone'}
           </span>
           <time title={new Date(message.createdAt).toLocaleString()}>
             {new Date(message.createdAt).toLocaleTimeString([], {
@@ -178,6 +185,56 @@ export const MessageCard = memo(function MessageCard({
           </div>
         )}
         <MessageBody text={message.text} />
+        {message.planAction && (
+          <details className="plan-evidence">
+            <summary>Exact plan action evidence</summary>
+            <p>
+              Recorded by {message.planAction.humanName} at {message.createdAt}. Plan revision{' '}
+              {message.planAction.planRevision}.
+            </p>
+            {message.planAction.entries.map((entry) => (
+              <section key={entry.id}>
+                <h4>
+                  {entry.id}@{entry.revision} · {entry.status}
+                </h4>
+                <MessageBody text={entry.markdown} />
+                <p>
+                  Author @{entry.author} · Sources{' '}
+                  {entry.sourceIds.map((id) => '#' + id).join(', ')}
+                </p>
+              </section>
+            ))}
+            <pre>{JSON.stringify(message.planAction, null, 2)}</pre>
+          </details>
+        )}
+        {message.planContribution && (
+          <div className="plan-evidence">
+            <p>
+              {message.planContribution.status === 'capacity'
+                ? 'not added to plan: capacity'
+                : 'Plan contribution: ' + message.planContribution.status}
+              {message.planContribution.proposalId ? ' ' + message.planContribution.proposalId : ''}
+            </p>
+            {message.planContribution.input.markdown && (
+              <MessageBody text={message.planContribution.input.markdown} />
+            )}
+          </div>
+        )}
+        {[
+          ...(message.planReference
+            ? [message.planReference]
+            : message.planContribution?.reference
+              ? [message.planContribution.reference]
+              : []),
+          ...(planLinks ?? []),
+        ].map((reference) => (
+          <button
+            key={reference.entryId + ':' + reference.revision}
+            onClick={() => planEntry?.(reference)}
+          >
+            Plan {reference.entryId}@{reference.revision} · source #{reference.messageId}
+          </button>
+        ))}
         {Boolean(message.attachments?.length) && (
           <MessageImages attachments={message.attachments!} sessionId={sessionId} view={view} />
         )}

@@ -21,7 +21,7 @@ export class ComposerHistory {
     if (!this.entries) {
       if (direction === 1) return;
       const entries = messages
-        .filter((message) => message.author === 'human')
+        .filter((message) => message.author === 'human' && !message.planAction)
         .map((message) => {
           const text = [...message.recipients.map((id) => '@' + id), message.text].join(' ');
           return message.replyTo[0]

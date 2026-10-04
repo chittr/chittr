@@ -16,6 +16,7 @@ import { providerIds, providers as providerInfo } from './providers.js';
 import { commandAccessSummary } from './command-access.js';
 import { version } from './version.js';
 import { readInstructionFile } from './instructions.js';
+import { planHelp } from './plan-command.js';
 import { updateInstallation } from './update.js';
 
 const launchEnvironment = { ...process.env };
@@ -86,6 +87,8 @@ Room commands:
   /new                      Start a new conversation while idle
   /sessions [ID]             List or open saved conversations while idle
   /quit                     Stop, save, and exit
+
+${planHelp}
 
 All permissions are room-wide. Missing grants require a config change and
 idle /reload. No temporary chat approvals. The preview requires macOS.
