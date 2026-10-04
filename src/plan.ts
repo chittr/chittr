@@ -12,7 +12,7 @@ import type {
 import { planBytes, planLimits, planReference, planReserve, planView } from './plan-view.js';
 import { publicMessage } from './checkpoint.js';
 
-const id = z.string().regex(/^m[1-9]\d{0,15}$/);
+const id = z.string().regex(/^m[1-9]\d{0,15}$/, 'Use a public message ID such as m1');
 const entryId = z.string().regex(/^p[1-9]\d{0,15}$/);
 const proposalId = z.string().regex(/^r[1-9]\d{0,15}$/);
 const revision = z.number().int().positive().safe();
@@ -54,14 +54,14 @@ export const planActionSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('resolve'),
       ...target,
-      explanation: z.string().trim().min(1).max(1024),
+      explanation: z.string().trim().min(1).max(1024, 'Explanation exceeds 1,024 characters'),
     })
     .strict(),
   z
     .object({
       kind: z.literal('reopen'),
       ...target,
-      explanation: z.string().trim().min(1).max(1024),
+      explanation: z.string().trim().min(1).max(1024, 'Explanation exceeds 1,024 characters'),
     })
     .strict(),
   z.object({ kind: z.literal('adopt'), proposalId, ...target }).strict(),

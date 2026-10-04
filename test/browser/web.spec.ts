@@ -2534,7 +2534,7 @@ test('keeps a refused plan request editable so invalid sources can be corrected'
   const response = page.waitForResponse((r) => r.url().endsWith('/api/plan'));
   await pane.getByRole('button', { name: 'Add entry', exact: true }).click();
   expect((await response).status()).toBe(400);
-  await expect(pane.getByRole('alert')).toBeVisible();
+  await expect(pane.getByRole('alert')).toContainText('Use a public message ID such as m1');
   await expect(text).toBeEnabled();
   await expect(text).toHaveValue('Keep this unsaved content');
   await expect(pane.getByRole('button', { name: 'Check plan request' })).toHaveCount(0);

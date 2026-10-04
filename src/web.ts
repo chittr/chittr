@@ -352,7 +352,10 @@ export class WebUI {
       return;
     }
     if (path === '/api/plan') {
-      const input = planRequestSchema.parse(data);
+      const parsed = planRequestSchema.safeParse(data);
+      if (!parsed.success)
+        throw new HttpError(400, 'Invalid plan action: ' + parsed.error.issues[0]!.message);
+      const input = parsed.data;
       const serialized = createHash('sha256')
         .update('plan:' + JSON.stringify(input))
         .digest('hex');
