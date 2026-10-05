@@ -289,8 +289,9 @@ export async function withPlanLock<T>(
   path: string,
   action: (lock: number) => Promise<T>,
   signal?: AbortSignal,
+  timeout = 15000,
 ): Promise<T> {
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + timeout;
   let fd = tryPlanLock(path);
   while (fd === undefined) {
     if (signal?.aborted) throw new Error('Interrupted');
@@ -299,6 +300,8 @@ export async function withPlanLock<T>(
     fd = tryPlanLock(path);
   }
   try {
+    // Cancellation during the last wait must not let the action run.
+    if (signal?.aborted) throw new Error('Interrupted');
     return await action(fd);
   } finally {
     closeSync(fd);

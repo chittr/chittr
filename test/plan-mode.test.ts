@@ -859,6 +859,86 @@ describe('plan data in turns', () => {
     expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('interrupted');
   });
 
+  it('follows the attachment as it stands when a waiting turn gets the lock', async () => {
+    const { f, plan, controller, room } = await planRoom('# Plan A\n');
+    const fake = () => f.fakes.codex!;
+    const other = join(f.other, 'plan b.md');
+    writeFileSync(other, '# Plan B\n');
+    let lock = tryPlanLock(plan)!;
+    room.send('Discuss');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await controller.submit('/plan off');
+    closeSync(lock);
+    await expect.poll(() => fake().inputs.length).toBe(1);
+    expect(fake().inputs[0]!.plan).toBeUndefined();
+    fake().finish();
+    await tick();
+    await controller.submit(`/plan resume ${plan}`);
+    lock = tryPlanLock(plan)!;
+    room.send('Again');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await controller.submit('/plan off');
+    await controller.submit(`/plan resume ${other}`);
+    closeSync(lock);
+    await expect.poll(() => fake().inputs.length).toBe(2);
+    expect(fake().inputs[1]!.plan).toMatchObject({
+      path: other,
+      status: 'changed',
+      text: '# Plan B\n',
+    });
+    // The hash recorded for that turn is plan B's, so the agent may write B without a reread.
+    await fake().tools.call('write_file', { path: other, text: '# Plan B\n\n- Agreed\n' });
+    fake().finish();
+    await tick();
+  });
+
+  it('records no plan hash for a turn stopped while it waited for the lock', async () => {
+    const { f, plan, room, turn } = await planRoom('# Plan\n');
+    await turn();
+    writeFileSync(plan, '# Plan v2\n');
+    const lock = tryPlanLock(plan)!;
+    room.send('Discuss v2');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const stopping = room.stop('codex');
+    closeSync(lock);
+    await stopping;
+    expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('interrupted');
+    await room.continue('codex');
+    // The same provider session resumes, so only an unrecorded hash can bring v2 back.
+    expect(f.fakes.codex!.starts).toEqual(['native-session']);
+    expect((await turn('Next')).plan).toMatchObject({ status: 'changed', text: '# Plan v2\n' });
+  });
+
+  it('fails a turn whose plan state cannot be read instead of inventing plan data', async () => {
+    const { f, room } = await planRoom('# Plan\n');
+    const { directory } = f.fakes.codex!.agent.planState!;
+    writeFileSync(join(directory, 'agents', 'codex.json'), '{');
+    room.send('Discuss');
+    await expect.poll(() => room.session.messages.at(-1)!.deliveries.codex!.status).toBe('failed');
+    expect(f.fakes.codex!.inputs).toEqual([]);
+    expect(room.session.notices.some((notice) => notice.text.startsWith('codex failed:'))).toBe(
+      true,
+    );
+  });
+
+  it('keeps a turn waiting for the plan lock past the tool deadline without inventing data', async () => {
+    const { f, plan, room } = await planRoom('# Plan\n');
+    const lock = tryPlanLock(plan)!;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    try {
+      room.send('Discuss');
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(f.fakes.codex!.inputs).toEqual([]);
+      expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('sent');
+      closeSync(lock);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect.poll(() => f.fakes.codex!.inputs.length).toBe(1);
+    expect(f.fakes.codex!.inputs[0]!.plan).toMatchObject({ status: 'changed', text: '# Plan\n' });
+  });
+
   it('hands the plan lock to the file worker, which keeps it after the caller lets go', async () => {
     const { f, plan, turn, tools } = await planRoom('# Plan\n');
     await turn();

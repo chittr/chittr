@@ -43,7 +43,6 @@ import {
   listPlans,
   planFileMissing,
   planFolder,
-  planRules,
   planTurn,
   resolvePlanArgument,
   tryPlanLock,
@@ -316,27 +315,34 @@ export class Room extends EventEmitter {
   }
   /**
    * The plan data for one agent's turn, read under the plan's lock so no turn sees a write in
-   * progress. The hash is recorded only when the turn shows the plan or it is unchanged.
+   * progress, with the hash to record once the provider receives the turn. It waits while
+   * another holder has the lock, until the turn is cancelled, and follows the attachment as it
+   * stands once the lock is held: none after `/plan off`, the new plan after a switch.
    */
-  private async planTurn(id: string, path: string, signal: AbortSignal): Promise<PlanTurn> {
-    const read = () => {
-      const { plan, record } = planTurn(path, this.plans.recorded(id));
-      if (record !== undefined) this.plans.record(id, record);
-      return plan;
-    };
-    try {
+  private async planTurn(
+    id: string,
+    signal: AbortSignal,
+  ): Promise<{ plan: PlanTurn; record?: string } | undefined> {
+    for (;;) {
+      const path = this.session.plan?.path;
+      if (!path) return undefined;
+      const read = () => {
+        if (signal.aborted) throw new Error('Interrupted');
+        if (this.session.plan?.path !== path) return undefined;
+        return planTurn(path, this.plans.recorded(id));
+      };
       // Read and release at once when the lock is free, so other agents' turns never wait on it.
       const lock = tryPlanLock(path);
-      if (lock === undefined) return await withPlanLock(path, async () => read(), signal);
-      try {
-        return read();
-      } finally {
-        closeSync(lock);
-      }
-    } catch (error) {
-      if (signal.aborted) throw error;
-      // A lock held past its deadline, or unreadable state, records nothing: a flag-only turn.
-      return { path, status: 'changed', rules: planRules };
+      let prepared;
+      if (lock === undefined)
+        prepared = await withPlanLock(path, async () => read(), signal, Infinity);
+      else
+        try {
+          prepared = read();
+        } finally {
+          closeSync(lock);
+        }
+      if (prepared) return prepared;
     }
   }
   private state(id: string): AgentState {
@@ -994,6 +1000,7 @@ export class Room extends EventEmitter {
     );
     const editsBefore = this.planEdits(id);
     const planPath = this.session.plan?.path;
+    let shownPlan = false;
     const turn = {
       messages: structuredClone(batch),
       context: structuredClone(context),
@@ -1013,10 +1020,17 @@ export class Room extends EventEmitter {
           )
         : planPath
           ? // Plan data waits for the plan's lock; without plan mode the turn starts at once.
-            this.planTurn(id, planPath, controller.signal).then((plan) => {
+            this.planTurn(id, controller.signal).then((prepared) => {
               if (controller.signal.aborted || state.active?.id !== attempt.id)
                 throw new Error('Interrupted');
-              return adapter.run({ ...turn, plan }, onEvent, controller.signal);
+              // Record the hash only as the provider receives the turn that carries the plan.
+              if (prepared?.record !== undefined) this.plans.record(id, prepared.record);
+              shownPlan = prepared?.plan.status === 'changed' && prepared.record !== undefined;
+              return adapter.run(
+                { ...turn, ...(prepared ? { plan: prepared.plan } : {}) },
+                onEvent,
+                controller.signal,
+              );
             })
           : adapter.run(turn, onEvent, controller.signal);
     const promise = invocation
@@ -1058,6 +1072,11 @@ export class Room extends EventEmitter {
         state.draft = '';
       })
       .catch((e) => {
+        // A turn that did not complete may not have shown its new plan text: send it again.
+        if (shownPlan)
+          try {
+            this.plans.record(id, undefined);
+          } catch {}
         for (const message of batch)
           if (['sent', 'received'].includes(message.deliveries[id]?.status ?? ''))
             message.deliveries[id]!.status = controller.signal.aborted ? 'interrupted' : 'failed';
