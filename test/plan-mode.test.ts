@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
   mkdirSync,
@@ -37,6 +37,10 @@ import {
   readPlanMode,
 } from '../src/plan.js';
 import { sandboxProfile } from '../src/tools.js';
+import { runProcess } from '../src/process.js';
+
+// Observe, without replacing, how tool services launch the sandboxed file worker.
+vi.mock('../src/process.js', { spy: true });
 import type {
   AdapterEvent,
   AgentAdapter,
@@ -823,14 +827,66 @@ describe('plan data in turns', () => {
     expect(readFileSync(plan, 'utf8')).toBe('# Plan\n');
   });
 
-  it('sends only the change flag while another agent holds the plan lock', async () => {
-    const { plan, turn } = await planRoom('# Plan\n');
-    const lock = tryPlanLock(plan)!;
-    const during = await turn();
+  it('prepares a turn after a plan write in progress, with the data the plan warrants', async () => {
+    const { f, plan, room } = await planRoom('# Plan\n');
+    const fake = () => f.fakes.codex!;
+    const held = async (message: string) => {
+      const lock = tryPlanLock(plan)!;
+      room.send(message);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(fake().inputs).toHaveLength(inputs);
+      return lock;
+    };
+    let inputs = 0;
+    // An unseen short plan still arrives with its text once the writer lets go.
+    closeSync(await held('Discuss'));
+    await expect.poll(() => fake().inputs.length).toBe(++inputs);
+    expect(fake().inputs.at(-1)!.plan).toMatchObject({ status: 'changed', text: '# Plan\n' });
+    fake().finish();
+    await tick();
+    // Contention alone does not report an unchanged plan as changed.
+    closeSync(await held('Again'));
+    await expect.poll(() => fake().inputs.length).toBe(++inputs);
+    expect(fake().inputs.at(-1)!.plan!.status).toBe('unchanged');
+    fake().finish();
+    await tick();
+    // Stopping while the turn waits interrupts it without calling the provider.
+    const lock = await held('Stopped while waiting');
+    await room.stop('codex');
     closeSync(lock);
-    expect(during.plan).toEqual({ path: plan, status: 'changed', rules: during.plan!.rules });
-    expect((await turn()).plan).toMatchObject({ status: 'changed', text: '# Plan\n' });
-    expect((await turn()).plan!.status).toBe('unchanged');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(fake().inputs).toHaveLength(inputs);
+    expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('interrupted');
+  });
+
+  it('hands the plan lock to the file worker, which keeps it after the caller lets go', async () => {
+    const { f, plan, turn, tools } = await planRoom('# Plan\n');
+    await turn();
+    vi.mocked(runProcess).mockClear();
+    await tools.call('write_file', { path: plan, text: '# Next\n' });
+    await tools.call('list_files', {});
+    const workers = vi
+      .mocked(runProcess)
+      .mock.calls.filter(([, args]) => args.some((arg) => arg.endsWith('tool-worker.js')));
+    expect(workers.map(([, , options]) => options?.inheritFds?.length ?? 0)).toEqual([1, 0]);
+    // An inherited descriptor holds the lock even after the parent's copy closes, as on a crash.
+    const lock = tryPlanLock(plan)!;
+    const worker = runProcess(
+      '/usr/bin/sandbox-exec',
+      [
+        '-p',
+        sandboxProfile(f.workspace, f.config.permissions, tools.scratch, true),
+        '/bin/sleep',
+        '1',
+      ],
+      { inheritFds: [lock] },
+    );
+    closeSync(lock);
+    expect(tryPlanLock(plan)).toBeUndefined();
+    expect((await worker).code).toBe(0);
+    const free = tryPlanLock(plan);
+    expect(free).toBeDefined();
+    closeSync(free!);
   });
 
   it('includes the plan again after the provider compacts during a turn', async () => {

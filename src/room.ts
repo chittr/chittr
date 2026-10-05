@@ -47,6 +47,7 @@ import {
   planTurn,
   resolvePlanArgument,
   tryPlanLock,
+  withPlanLock,
 } from './plan.js';
 import type { Persistence } from './store.js';
 import { attachmentLimits, validateAttachmentSet, type AttachmentAccess } from './attachments.js';
@@ -313,24 +314,29 @@ export class Room extends EventEmitter {
       // After close the state is gone; the last read hashes stay. A stale hash only resends the plan.
     }
   }
-  /** The plan data for one agent's turn, recording its hash only when the turn shows the plan. */
-  private planTurn(id: string): PlanTurn | undefined {
-    const path = this.session.plan?.path;
-    if (!path) return undefined;
-    // A flag-only turn records nothing, so plan writes stay refused until a read.
-    const flagOnly: PlanTurn = { path, status: 'changed', rules: planRules };
-    let lock: number | undefined;
-    try {
-      // Never read a write in progress: while an agent holds the plan's lock, send the flag only.
-      lock = tryPlanLock(path);
-      if (lock === undefined) return flagOnly;
+  /**
+   * The plan data for one agent's turn, read under the plan's lock so no turn sees a write in
+   * progress. The hash is recorded only when the turn shows the plan or it is unchanged.
+   */
+  private async planTurn(id: string, path: string, signal: AbortSignal): Promise<PlanTurn> {
+    const read = () => {
       const { plan, record } = planTurn(path, this.plans.recorded(id));
       if (record !== undefined) this.plans.record(id, record);
       return plan;
-    } catch {
-      return flagOnly;
-    } finally {
-      if (lock !== undefined) closeSync(lock);
+    };
+    try {
+      // Read and release at once when the lock is free, so other agents' turns never wait on it.
+      const lock = tryPlanLock(path);
+      if (lock === undefined) return await withPlanLock(path, async () => read(), signal);
+      try {
+        return read();
+      } finally {
+        closeSync(lock);
+      }
+    } catch (error) {
+      if (signal.aborted) throw error;
+      // A lock held past its deadline, or unreadable state, records nothing: a flag-only turn.
+      return { path, status: 'changed', rules: planRules };
     }
   }
   private state(id: string): AgentState {
@@ -986,15 +992,14 @@ export class Room extends EventEmitter {
     const context = this.session.messages.filter(
       (m) => m.sequence > state.contextThrough && !attempt.messageIds.includes(m.id),
     );
-    const plan = this.planTurn(id);
     const editsBefore = this.planEdits(id);
+    const planPath = this.session.plan?.path;
     const turn = {
       messages: structuredClone(batch),
       context: structuredClone(context),
       history: structuredClone(this.session.messages),
       participants: this.enabledNames(),
       humanName: this.config.humanName ?? 'You',
-      ...(plan ? { plan } : {}),
     };
     // schedule() already failed unsupported images for this recipient, so an
     // image reaching dispatch with a closed gate is an invariant failure. It must
@@ -1006,7 +1011,14 @@ export class Room extends EventEmitter {
               `Invariant violation: initial images for @${id} reached dispatch without passing the room preflight`,
             ),
           )
-        : adapter.run(turn, onEvent, controller.signal);
+        : planPath
+          ? // Plan data waits for the plan's lock; without plan mode the turn starts at once.
+            this.planTurn(id, planPath, controller.signal).then((plan) => {
+              if (controller.signal.aborted || state.active?.id !== attempt.id)
+                throw new Error('Interrupted');
+              return adapter.run({ ...turn, plan }, onEvent, controller.signal);
+            })
+          : adapter.run(turn, onEvent, controller.signal);
     const promise = invocation
       .then((result) => {
         if (controller.signal.aborted || state.active?.id !== attempt.id)

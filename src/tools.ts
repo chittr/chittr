@@ -377,7 +377,7 @@ export class ToolService {
     const location = this.planState!;
     return withPlanLock(
       planFile,
-      async () => {
+      async (lock) => {
         // The call may have waited: lifecycle changes meanwhile still cancel it.
         this.assertCallable();
         if (controller.signal.aborted) throw new Error('Interrupted');
@@ -390,7 +390,8 @@ export class ToolService {
           throw new Error(
             'The plan changed since you last received or read it. Reread it with read_file, then retry the write.',
           );
-        const result = await this.run(name, input, mode, planFile, controller, signal);
+        // The worker inherits the lock, so it stays held for as long as the worker can write.
+        const result = await this.run(name, input, mode, planFile, controller, signal, lock);
         if (name === 'write_file')
           recordAgentPlan(
             location,
@@ -410,6 +411,7 @@ export class ToolService {
     planFile: string | undefined,
     controller: AbortController,
     signal?: AbortSignal,
+    lock?: number,
   ): Promise<unknown> {
     const plan = mode?.path;
     if (name === 'read_attachment') {
@@ -543,6 +545,7 @@ export class ToolService {
         cwd: this.workspace,
         signal: controller.signal,
         timeout: worker ? 10000 : (commandInput.timeout_ms ?? 30000),
+        ...(worker && lock !== undefined ? { inheritFds: [lock] } : {}),
         env: {
           PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
           LANG: 'en_US.UTF-8',

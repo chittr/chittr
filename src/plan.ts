@@ -282,11 +282,12 @@ export function tryPlanLock(path: string): number | undefined {
 }
 /**
  * Hold the plan's lock while `action` checks and touches the plan, so no two agents, rooms or
- * processes can both pass the hash guard against the same version.
+ * processes can both pass the hash guard against the same version. `action` receives the lock
+ * descriptor; a child that inherits it keeps the lock until it exits, even if this process dies.
  */
 export async function withPlanLock<T>(
   path: string,
-  action: () => Promise<T>,
+  action: (lock: number) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   const deadline = Date.now() + 15000;
@@ -298,7 +299,7 @@ export async function withPlanLock<T>(
     fd = tryPlanLock(path);
   }
   try {
-    return await action();
+    return await action(fd);
   } finally {
     closeSync(fd);
   }
