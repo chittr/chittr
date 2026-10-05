@@ -59,6 +59,15 @@ export interface SessionSnapshot {
   exchanges: Record<string, Exchange>;
   checkpoint?: Checkpoint;
 }
+/** The attached plan while plan mode is on. */
+export interface PlanSnapshot {
+  /** Resolved absolute path of the plan file. */
+  path: string;
+  /** File name of the plan. */
+  name: string;
+  /** True when the file is gone or is no longer a regular, unlinked file. */
+  missing: boolean;
+}
 export interface RoomSnapshot {
   workspace: string;
   humanName: string;
@@ -72,6 +81,8 @@ export interface RoomSnapshot {
   agents: AgentSnapshot[];
   /** Every session agent in insertion order, including removed agents. */
   sessionAgentIds: string[];
+  /** Present only while plan mode is on. */
+  plan?: PlanSnapshot;
 }
 export type TimelineEntry =
   { kind: 'message'; item: Message; pinned: boolean } | { kind: 'notice'; item: Notice };
@@ -87,6 +98,8 @@ export interface RoomSource {
   isIdle(): boolean;
   pending(id: string): { queued: number; capped: number; unresolved: number };
   initialImageSupport(id: string): ImagePathSupport | undefined;
+  /** The attached plan, checked on the file system at read time; absent while plan mode is off. */
+  planStatus?(): PlanSnapshot | undefined;
 }
 
 /** Narrow current-input facts for completion. */
@@ -109,6 +122,7 @@ export function providerDefault(value?: string): string {
 export function projectRoom(room: RoomSource): RoomSnapshot {
   const { config, session } = room;
   const ids = new Set([...Object.keys(config.agents), ...Object.keys(session.agents)]);
+  const plan = room.planStatus?.();
   return {
     workspace: config.workspace,
     humanName: config.humanName ?? 'You',
@@ -161,6 +175,7 @@ export function projectRoom(room: RoomSource): RoomSnapshot {
       return { ...projected, status, statusDetail: detail };
     }),
     sessionAgentIds: Object.keys(session.agents),
+    ...(plan ? { plan } : {}),
   };
 }
 

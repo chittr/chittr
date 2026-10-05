@@ -823,6 +823,54 @@ test('room controls, saved conversation restore, and responsive layout', async (
   await page.screenshot({ path: '.local/web-dark.png', fullPage: true, animations: 'disabled' });
 });
 
+test('shows a plan banner with copy and Open while plan mode is on, on desktop and mobile', async ({
+  page,
+}) => {
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  const banner = page.getByRole('region', { name: 'Plan mode', exact: true });
+  await expect(banner).toHaveCount(0);
+  await composer.fill('/plan');
+  await composer.press('Enter');
+  await expect(banner).toBeVisible();
+  const { plan, session } = await state(page);
+  expect(plan?.missing).toBe(false);
+  await expect(banner).toContainText(plan!.path);
+  await expect(page.locator('[data-message-id]')).toHaveCount(0);
+  // Stub the clipboard and the open request so the host clipboard and apps are untouched.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          (window as any).copied = text;
+        },
+      },
+      configurable: true,
+    });
+  });
+  await banner.getByRole('button', { name: 'Copy plan path', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).copied)).toBe(plan!.path);
+  const opened: unknown[] = [];
+  await page.route('**/api/plan/open', async (route) => {
+    opened.push(route.request().postDataJSON());
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await banner.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect.poll(() => opened).toEqual([{ sessionId: session.id }]);
+  await page.screenshot({ path: '.local/web-plan.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(banner.getByRole('button', { name: 'Open', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  rmSync(plan!.path);
+  // No file watching: the banner learns of the missing file with the next room change.
+  await composer.fill('/pins');
+  await composer.press('Enter');
+  await expect(banner).toContainText('File missing');
+  await expect(banner.getByRole('button', { name: 'Open', exact: true })).toBeDisabled();
+  await composer.fill('/plan off');
+  await composer.press('Enter');
+  await expect(banner).toHaveCount(0);
+});
 test('a theme choice overrides the system scheme, survives reload and a new port, and can follow the system again', async ({
   page,
   context,

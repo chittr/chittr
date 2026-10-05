@@ -18,6 +18,7 @@ export const mcpSettingsSchema = z
     commandMode: z.enum(['off', 'sandboxed', 'trusted']),
     commandEndpoint: commandEndpointSchema,
     attachmentStore: attachmentResolverSettingsSchema.optional(),
+    planState: z.object({ directory: z.string(), agent: z.string() }).strict().optional(),
   })
   .strict();
 const settings = mcpSettingsSchema.parse(JSON.parse(process.argv[2] ?? '{}'));
@@ -30,6 +31,7 @@ const tools = new ToolService(
   settings.maintenanceFile,
   settings.attachmentStore ? new FileAttachmentResolver(settings.attachmentStore) : undefined,
   settings.attachmentTurnFile,
+  settings.planState,
 );
 await tools.check();
 const pendingImages = new Map<string | number, { result: AttachmentResult; cleanup: () => void }>();

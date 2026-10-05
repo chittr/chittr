@@ -18,6 +18,9 @@ import {
 import type { Checkpoint, Handoff } from './types.js';
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { basename } from 'node:path';
+import { closeSync, rmSync } from 'node:fs';
 import type {
   RoomConfig,
   Session,
@@ -29,7 +32,21 @@ import type {
   AdapterEvent,
   AttachmentMetadata,
   AttachmentSendOperation,
+  PlanTurn,
+  SkillAccess,
 } from './types.js';
+import {
+  PlanState,
+  checkedPlanFolder,
+  checkedPlanPath,
+  createPlanFile,
+  listPlans,
+  planFileMissing,
+  planFolder,
+  planTurn,
+  resolvePlanArgument,
+  tryPlanLock,
+} from './plan.js';
 import type { Persistence } from './store.js';
 import { attachmentLimits, validateAttachmentSet, type AttachmentAccess } from './attachments.js';
 import { createAdapter } from './adapters/index.js';
@@ -70,6 +87,8 @@ export interface DraftUpdate {
   version?: number;
 }
 const now = () => new Date().toISOString();
+/** Plan data prepared for one turn, and the hash to record as the provider receives it. */
+type PreparedPlan = { plan: PlanTurn; record?: string };
 const uuidIdentity = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
 export function newSession(config: RoomConfig): Session {
   return {
@@ -109,6 +128,9 @@ export class Room extends EventEmitter {
   private stops = new Set<Promise<void>>();
   private reloading = false;
   private persistTimer?: NodeJS.Timeout;
+  /** Host-owned plan-mode state that tool services read at call time. */
+  private plans = new PlanState();
+  private planRetry?: NodeJS.Timeout;
   constructor(
     public config: RoomConfig,
     private persistence: Persistence,
@@ -119,6 +141,8 @@ export class Room extends EventEmitter {
     super();
     this.session = session ? structuredClone(session) : newSession(config);
     freezeLegacyQuestions(this.session.messages);
+    if (this.session.plan)
+      this.plans.set(this.session.plan.path, this.session.plan.hashes, this.skillBundles());
     if (session) {
       const savedMode = session.commandMode ?? (session.permissions.commands ? 'sandboxed' : 'off');
       const policyChanged =
@@ -162,6 +186,11 @@ export class Room extends EventEmitter {
         'Conversation resumed. Queued messages run as agents connect; interrupted or failed responses need /retry.',
         false,
       );
+      if (this.session.plan)
+        this.notice(
+          `This conversation is still in plan mode with ${basename(this.session.plan.path)}. Run /plan off to leave it.`,
+          false,
+        );
     }
     this.session.permissions = { ...config.permissions };
     if (session?.commandMode === 'trusted' && commandMode(config) !== 'trusted')
@@ -200,6 +229,115 @@ export class Room extends EventEmitter {
     this.session.pinnedMessageIds = [...ids];
     this.notice(`${pinned ? 'Pinned' : 'Unpinned'} #${message.id}.`);
   }
+  /** The folder `plans.location` selects for this workspace's plans. */
+  planFolder(): string {
+    return this.config.plans?.folder ?? planFolder('user', this.config.workspace, homedir());
+  }
+  /** The attached plan for display, read fresh; undefined while plan mode is off. */
+  planStatus(): { path: string; name: string; missing: boolean } | undefined {
+    const path = this.session.plan?.path;
+    return path ? { path, name: basename(path), missing: planFileMissing(path) } : undefined;
+  }
+  private assertPlanOff(): void {
+    if (this.closed || this.fatal) throw new Error(this.fatal ?? 'Room is closed');
+    const path = this.session.plan?.path;
+    if (path) throw new Error(`Plan mode is already on with ${path}. Run /plan off first.`);
+  }
+  /** Every skill bundle discovered for any participant; no plan may live inside one. */
+  private skillBundles(): SkillAccess[] {
+    return Object.values(this.config.agents).flatMap((agent) =>
+      (agent.skills?.bundles ?? []).map(({ path, root }) => ({ path, root })),
+    );
+  }
+  /** `/plan`: create an empty plan file, attach it and turn plan mode on. */
+  createPlan(): string {
+    this.assertPlanOff();
+    const folder = this.planFolder();
+    const skills = this.skillBundles();
+    // Check the folder by name first, then the created file's resolved path.
+    checkedPlanFolder(folder, skills);
+    const path = createPlanFile(folder);
+    try {
+      checkedPlanPath(path, skills);
+    } catch (error) {
+      rmSync(path, { force: true });
+      throw error;
+    }
+    this.attachPlan(path, `Created ${path}. Plan mode is on; run /plan off to leave it.`);
+    return path;
+  }
+  /** `/plan resume`: list this workspace's plans, or attach the one an argument names. */
+  resumePlan(argument: string): string | undefined {
+    this.assertPlanOff();
+    const folder = this.planFolder();
+    if (!argument) {
+      const plans = listPlans(folder);
+      this.notice(
+        plans.length
+          ? `Plans in ${folder}, newest first (${plans.length})\n\n${plans.join('\n')}\n\nUse /plan resume <name or path> to attach one.`
+          : `No plans in ${folder}. Use /plan to create one.`,
+      );
+      return undefined;
+    }
+    const path = resolvePlanArgument(argument, {
+      folder,
+      workspace: this.config.workspace,
+      home: homedir(),
+      skills: this.skillBundles(),
+    });
+    this.attachPlan(path, `Plan mode is on with ${path}. Run /plan off to leave it.`);
+    return path;
+  }
+  /** `/plan off`: detach the plan and end plan mode. */
+  endPlan(): void {
+    if (this.closed || this.fatal) throw new Error(this.fatal ?? 'Room is closed');
+    const path = this.session.plan?.path;
+    if (!path) {
+      this.notice('Plan mode is already off.');
+      return;
+    }
+    this.plans.set(undefined);
+    delete this.session.plan;
+    this.notice(`Plan mode is off. Detached ${path}; writes follow permissions.edits again.`);
+  }
+  private attachPlan(path: string, text: string): void {
+    // Enforcement state first: tool services admit the plan from their next call.
+    this.plans.set(path, {}, this.skillBundles());
+    this.session.plan = { path, hashes: {} };
+    this.notice(text);
+  }
+  /** Read recorded hashes back from the files tool services also write. */
+  private syncPlan(): void {
+    if (!this.session.plan) return;
+    try {
+      this.session.plan.hashes = this.plans.hashes();
+    } catch {
+      // After close the state is gone; the last read hashes stay. A stale hash only resends the plan.
+    }
+  }
+  /**
+   * The plan data for one agent's next turn, read under the plan's lock so no turn sees a write
+   * in progress, with the hash to record as the provider receives the turn. `busy` while another
+   * holder has the lock: the scheduler keeps that agent's work queued and tries again shortly.
+   */
+  private preparePlan(id: string): PreparedPlan | 'busy' | undefined {
+    const path = this.session.plan?.path;
+    if (!path) return undefined;
+    const lock = tryPlanLock(path);
+    if (lock === undefined) return 'busy';
+    try {
+      return planTurn(path, this.plans.recorded(id));
+    } finally {
+      closeSync(lock);
+    }
+  }
+  /** One timer at a time: the lock, never the file, is checked again while it is busy. */
+  private retryPlanLock(): void {
+    this.planRetry ??= setTimeout(() => {
+      this.planRetry = undefined;
+      this.schedule();
+    }, 20);
+  }
   private state(id: string): AgentState {
     const state = this.session.agents[id];
     if (!state) throw new Error(`Unknown agent @${id}`);
@@ -214,6 +352,7 @@ export class Room extends EventEmitter {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
       try {
+        this.syncPlan();
         this.persistence.save(this.session);
       } catch (e) {
         this.fatal = `Session could not be saved: ${errorText(e)}. Work is paused.`;
@@ -283,6 +422,7 @@ export class Room extends EventEmitter {
     return {
       ...agent,
       conversationInstructions: brief,
+      planState: this.plans.location(id),
       fingerprint:
         shared || brief
           ? createHash('sha256')
@@ -330,11 +470,15 @@ export class Room extends EventEmitter {
         this.persistence.attachmentAccess?.(this.session.id),
       );
       this.adapters.set(id, adapter);
-      const result = await adapter.start(state.sessionId);
+      const requested = state.sessionId;
+      const result = await adapter.start(requested);
       if (this.closed) {
         await adapter.close();
         return;
       }
+      // A fresh provider session has not seen the plan: its next turn includes it again.
+      if (!requested || result.restored || result.sessionId !== requested)
+        this.plans.record(id, undefined);
       if (result.restored || !previous?.sessionId || result.sessionId !== previous.sessionId)
         state.contextUsage = undefined;
       if (result.restored && !changed && previous?.sessionId && this.session.messages.length) {
@@ -468,6 +612,7 @@ export class Room extends EventEmitter {
       id: options.operationId!,
       inputHash: attachmentInputHash!,
     };
+    this.syncPlan();
     const candidate = structuredClone(this.session);
     if (options.draft) {
       const versions = candidate.composerDraftVersions ?? {};
@@ -709,7 +854,17 @@ export class Room extends EventEmitter {
           attachmentBytes += nextAttachmentBytes;
           attachmentCount += nextAttachmentCount;
         }
-        if (batch.length) this.dispatch(id, batch);
+        if (!batch.length) continue;
+        let prepared: ReturnType<typeof this.preparePlan> | { error: unknown };
+        try {
+          prepared = this.preparePlan(id);
+        } catch (error) {
+          // Unreadable plan state fails this turn through the usual failure path.
+          prepared = { error };
+        }
+        // A plan write in progress holds this agent's work in the queue, not in a dispatched turn.
+        if (prepared === 'busy') this.retryPlanLock();
+        else this.dispatch(id, batch, prepared);
       }
     });
   }
@@ -786,7 +941,11 @@ export class Room extends EventEmitter {
     }
     return { queued, capped, unresolved };
   }
-  private dispatch(id: string, batch: Message[]): void {
+  private dispatch(
+    id: string,
+    batch: Message[],
+    prepared?: PreparedPlan | { error: unknown },
+  ): void {
     const state = this.state(id);
     const adapter = this.adapters.get(id)!;
     const chargedRoots = [
@@ -838,18 +997,35 @@ export class Room extends EventEmitter {
       }
       if (event.type === 'text') state.draft = event.text;
       if (event.type === 'context') state.contextUsage = event.usage;
+      // A context event without a reading marks provider compaction: show the plan again.
+      if (event.type === 'context' && !event.usage) this.plans.record(id, undefined);
       if (event.type === 'notice') this.notice(`${id}: ${event.text}`, false);
       this.changed(event.type !== 'text');
     };
     const context = this.session.messages.filter(
       (m) => m.sequence > state.contextThrough && !attempt.messageIds.includes(m.id),
     );
+    const editsBefore = this.planEdits(id);
+    const plan = prepared && 'plan' in prepared ? prepared : undefined;
     const turn = {
       messages: structuredClone(batch),
       context: structuredClone(context),
       history: structuredClone(this.session.messages),
       participants: this.enabledNames(),
       humanName: this.config.humanName ?? 'You',
+      ...(plan ? { plan: plan.plan } : {}),
+    };
+    // Recorded only as the provider receives the turn. A failed turn that brought new plan text
+    // clears it again, unless a tool recorded since (seq tells identical bytes apart).
+    let shown: { hash?: string; seq: number } | undefined;
+    // Async with no await before adapter.run: the provider is still called synchronously, and a
+    // throw while recording becomes a rejection on the failure path instead of escaping dispatch.
+    const run = async () => {
+      if (plan?.record !== undefined) {
+        this.plans.record(id, plan.record);
+        if (plan.plan.status === 'changed') shown = this.plans.snapshot(id);
+      }
+      return adapter.run(turn, onEvent, controller.signal);
     };
     // schedule() already failed unsupported images for this recipient, so an
     // image reaching dispatch with a closed gate is an invariant failure. It must
@@ -861,7 +1037,9 @@ export class Room extends EventEmitter {
               `Invariant violation: initial images for @${id} reached dispatch without passing the room preflight`,
             ),
           )
-        : adapter.run(turn, onEvent, controller.signal);
+        : prepared && 'error' in prepared
+          ? Promise.reject(prepared.error)
+          : run();
     const promise = invocation
       .then((result) => {
         if (controller.signal.aborted || state.active?.id !== attempt.id)
@@ -901,6 +1079,12 @@ export class Room extends EventEmitter {
         state.draft = '';
       })
       .catch((e) => {
+        // A turn that did not complete may not have shown its new plan text: send it again.
+        try {
+          const current = shown && this.plans.snapshot(id);
+          if (current && current.seq === shown!.seq && current.hash === shown!.hash)
+            this.plans.record(id, undefined);
+        } catch {}
         for (const message of batch)
           if (['sent', 'received'].includes(message.deliveries[id]?.status ?? ''))
             message.deliveries[id]!.status = controller.signal.aborted ? 'interrupted' : 'failed';
@@ -915,6 +1099,7 @@ export class Room extends EventEmitter {
         }
       })
       .finally(() => {
+        if (this.planEdits(id) > editsBefore) this.notice(`${id} edited the plan.`, false);
         if (state.active?.id === attempt.id) delete state.active;
         this.refreshQuestionState(id);
         state.detail = undefined;
@@ -923,6 +1108,14 @@ export class Room extends EventEmitter {
         this.schedule();
       });
     this.runs.set(id, { controller, promise });
+  }
+  /** Successful plan writes this agent's tool services have counted. */
+  private planEdits(id: string): number {
+    try {
+      return this.plans.edits(id);
+    } catch {
+      return 0;
+    }
   }
   private validateOutcomes(outcomes: Outcome[], required: string[], author: string): void {
     const seen = new Set<string>();
@@ -1095,6 +1288,8 @@ export class Room extends EventEmitter {
         return;
       }
       record.status = 'running';
+      // Compaction may drop the plan from context: the next turn includes it again.
+      this.plans.record(id, undefined);
       const adapter = this.adapters.get(id)!;
       if (record.route === 'native') {
         record.detail = 'Native context compaction';
@@ -1316,6 +1511,7 @@ export class Room extends EventEmitter {
       );
       // Save a candidate before touching the live provider reference or cursor.
       // No await separates validation, persistence and the in-memory commit.
+      this.syncPlan();
       const candidate = structuredClone(this.session);
       if (checkpoint !== previousCheckpoint) (candidate.checkpoints ??= []).push(checkpoint);
       (candidate.handoffs ??= {})[id] = { ...handoff, consumedBySessionId: result.sessionId };
@@ -1492,6 +1688,7 @@ export class Room extends EventEmitter {
     if (update.clientId && update.version !== undefined)
       nextVersions[update.clientId] = update.version;
     if (update.attachmentIds !== undefined) {
+      this.syncPlan();
       const candidate = structuredClone(this.session);
       candidate.composerDraft = update.text;
       candidate.composerAttachments = structuredClone(attachments);
@@ -1523,6 +1720,9 @@ export class Room extends EventEmitter {
       commandMode(config) !== commandMode(this.config);
     const old = this.config;
     this.config = config;
+    // The new config can discover other skill bundles; tool services exclude those too.
+    if (this.session.plan)
+      this.plans.set(this.session.plan.path, this.plans.hashes(), this.skillBundles());
     this.interruptDisabledConsultations();
     this.session.permissions = { ...config.permissions };
     this.session.commandMode = commandMode(config);
@@ -1593,6 +1793,8 @@ export class Room extends EventEmitter {
     await Promise.all([...this.maintenance.values()].map((operation) => operation.promise));
     await Promise.all([...this.runs.values()].map((r) => r.promise));
     clearTimeout(this.persistTimer);
+    clearTimeout(this.planRetry);
     this.changed();
+    this.plans.close();
   }
 }

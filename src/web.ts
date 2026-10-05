@@ -8,6 +8,7 @@ import { RoomController } from './controller.js';
 import { complete } from './completion.js';
 import type { CommandResult, StageAttachmentResult, WebState } from './web-types.js';
 import { AttachmentError, attachmentLimits, attachmentLimitText } from './attachments.js';
+import { runProcess } from './process.js';
 
 const identity = z.string().uuid();
 const draftIdentity = z.object({
@@ -40,6 +41,12 @@ const draftSchema = draftIdentity
   .refine((value) => value.attachmentIds === undefined || value.baseRevision !== undefined, {
     message: 'Attachment draft updates require baseRevision',
   });
+const planOpenSchema = z.object({ sessionId: identity }).strict();
+/** Open a file with the macOS default application. */
+export async function openWithSystem(path: string): Promise<void> {
+  const result = await runProcess('/usr/bin/open', [path], { timeout: 10000 });
+  if (result.code !== 0) throw new Error(result.stderr.trim() || `Could not open ${path}`);
+}
 const completionSchema = z
   .object({
     sessionId: identity,
@@ -117,7 +124,12 @@ export class WebUI {
   };
   constructor(
     readonly controller: RoomController,
-    private options: { port?: number; assets?: string } = {},
+    private options: {
+      port?: number;
+      assets?: string;
+      /** Test seam for the plan Open button; defaults to `/usr/bin/open`. */
+      openFile?: (path: string) => Promise<void>;
+    } = {},
   ) {}
   async mount(): Promise<string> {
     const root = this.options.assets ?? fileURLToPath(new URL('../dist/web/', import.meta.url));
@@ -337,6 +349,18 @@ export class WebUI {
         200,
         complete(room.config.workspace, room.enabledNames(), input.value, input.cursor),
       );
+      return;
+    }
+    if (path === '/api/plan/open') {
+      const input = planOpenSchema.parse(data);
+      const room = this.controller.room;
+      if (input.sessionId !== room.session.id) throw new HttpError(409, 'Conversation changed');
+      // Only the attached plan is ever opened; the request carries no path.
+      const plan = room.planStatus();
+      if (!plan) throw new HttpError(409, 'Plan mode is off');
+      if (plan.missing) throw new HttpError(404, `The plan file is missing: ${plan.path}`);
+      await (this.options.openFile ?? openWithSystem)(plan.path);
+      json(response, 200, { ok: true });
       return;
     }
     if (path === '/api/command') {

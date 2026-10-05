@@ -96,6 +96,7 @@ it('loads, lists and round-trips the checked-in older-shape version-1 fixture', 
     'checkpoints',
     'handoffs',
     'recoveryRequired',
+    'plan',
   ])
     expect(original).not.toHaveProperty(absent);
   expect(original.messages[1].question).toEqual({ choices: original.messages[1].question.choices });
@@ -172,6 +173,21 @@ it.each([
     break: (s: any) => (s.pinnedMessageIds = ['m999']),
   },
   {
+    label: 'a plan path that is not an absolute .md path',
+    message: CORE,
+    break: (s: any) => (s.plan = { path: 'plans/plan.md', hashes: {} }),
+  },
+  {
+    label: 'a plan hash that is not SHA-256 hex',
+    message: CORE,
+    break: (s: any) => (s.plan = { path: '/plans/plan.md', hashes: { claude: 'stale' } }),
+  },
+  {
+    label: 'a plan record with unknown fields',
+    message: CORE,
+    break: (s: any) => (s.plan = { path: '/plans/plan.md', hashes: {}, mode: 'on' }),
+  },
+  {
     label: 'a frozen answer before its question',
     message: 'Saved question history is invalid; it has not been overwritten',
     break: (s: any) => (s.messages[1].question.frozenAnswerId = 'm1'),
@@ -185,6 +201,20 @@ it.each([
   expect(() => store.load(id)).toThrow(entry.message);
   expect(readFileSync(path, 'utf8')).toBe(raw);
   expect(readFileSync(latest, 'utf8')).toBe(index);
+});
+
+it('round-trips a saved plan and refuses to save an invalid one', () => {
+  const { store } = place();
+  store.acquire();
+  const loaded = store.load(id)!;
+  loaded.plan = {
+    path: '/plans/2026-10-05-1432-amber-quiet-falcon.md',
+    hashes: { claude: 'a'.repeat(64) },
+  };
+  store.save(loaded);
+  expect(store.load(id)!.plan).toEqual(loaded.plan);
+  expect(() => store.save({ ...loaded, plan: { path: '/plans/plan.txt', hashes: {} } })).toThrow();
+  expect(store.load(id)!.plan).toEqual(loaded.plan);
 });
 
 it('freezes legacy questions in memory always and on disk only under the lock', () => {

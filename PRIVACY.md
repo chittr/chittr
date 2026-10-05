@@ -36,6 +36,11 @@ or permits deletion. Check the settings and terms for your own account with
   selects a different storage base. Records include messages, drafts, routing
   and tool-activity summaries, provider session references, checkpoints and
   attachment files. Paths and errors can reveal details of your workspace.
+- Plans created with `/plan` live under `~/.agents/chittr/plans/<workspace>/`
+  by default. `plans.location` can put them in the launch directory's
+  `.agents/chittr/plans/` or another folder you choose. A conversation saves the
+  path of its attached plan, and Chittr never deletes plan files. While plan mode
+  is on, Chittr reads the plan for each turn and sends its text to the agents.
 - The browser keeps its launch token, drafts and pending request identities in
   origin-scoped tab storage. The printed browser link grants access to that
   running room. Keep it private. Closing the tab does not stop the room.
@@ -77,6 +82,11 @@ on. They run as your account with its filesystem, network, exported environment
 and existing credentials. They can read or change files outside the workspace.
 Separate agent names or provider accounts do not create separate OS accounts.
 Stopping an agent does not undo completed commands, edits or network requests.
+
+Plan mode is the one exception to the edits permission. While a plan is attached,
+agents can write that plan file even with `edits: false`, and read it even when it
+is outside the launch directory. No other file can be written, and commands run
+sandboxed without account access until `/plan off`.
 
 ## Preview limits and reports
 

@@ -104,6 +104,8 @@ export async function runProcess(
     signal?: AbortSignal;
     timeout?: number;
     maxOutput?: number;
+    /** Descriptors the child keeps open as fd 3 onward, such as a lock it must outlive us with. */
+    inheritFds?: number[];
   } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
@@ -114,9 +116,9 @@ export async function runProcess(
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
-      stdio: 'pipe',
+      stdio: ['pipe', 'pipe', 'pipe', ...(options.inheritFds ?? [])],
       detached: process.platform !== 'win32',
-    });
+    }) as ChildProcessWithoutNullStreams;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     let stdout = '',

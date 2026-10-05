@@ -130,6 +130,25 @@ Type `./` in either composer to open the file explorer at the launch directory. 
 
 Pins are saved with each conversation and survive resume. Pin any human or agent message with `/pin #m1`, remove it with `/unpin #m1`, and use `/pins` to read all pins in conversation order. The browser also has a Pin button on each message and a Pinned messages list with copy, unpin, and go-to-message controls. Pinning and viewing pins do not send messages to agents or change their context.
 
+### Plan mode
+
+Plan mode keeps one Markdown plan beside the discussion and stops agents from building while you plan. The plan is an ordinary file: open and edit it with your own editor. Discussion, edit requests and agreement all happen in chat.
+
+- `/plan` creates an empty plan named like `2026-10-05-1432-amber-quiet-falcon.md` in the plan folder, attaches it to the conversation and turns plan mode on. [`plans.location`](configuration.md#plans) chooses the folder.
+- `/plan resume` lists this workspace's plans, newest first. `/plan resume <name or path>` attaches one. A name is a file in the plan folder, by its full file name or its three-word part, such as `amber-quiet-falcon`. An argument containing `/` or starting with `~` is a path: it can name any existing `.md` file, including one from another workspace, and can contain spaces. A relative path starts from the launch directory. Symlinks, other extensions and files inside a skill bundle are refused.
+- `/plan off` detaches the plan and ends plan mode.
+
+`/plan` and `/plan resume` refuse while a plan is attached; run `/plan off` first. Plan commands send nothing to agents and start no turns.
+
+While plan mode is on:
+
+- Agents can read and write the attached plan file and no other file, whatever `permissions.edits` says. Commands run sandboxed with workspace writes denied. Trusted commands lose account access until `/plan off`.
+- Each agent's turn carries the plan path, a few plan-mode rules, and whether the plan changed since that agent's last turn. A changed plan up to 32 KiB comes with its text; a larger one comes as its path and change flag, and the agent reads it itself.
+- An agent edits the plan only when you name it and ask. Its write is refused if the plan changed since the agent last saw it, so your own edits aren't overwritten. When an agent writes the plan, the transcript notes it, for example `claude edited the plan.`
+- The browser shows a banner with the plan path, a copy button and an **Open** button, which opens the plan in its default macOS app. The terminal header shows the path, as a clickable link in terminals that support links.
+
+The conversation saves its plan mode. Resume, `/sessions` and restarts reopen it as you left it, with a notice such as `This conversation is still in plan mode with 2026-10-05-1432-amber-quiet-falcon.md. Run /plan off to leave it.` Queued messages still run. `/new` starts with plan mode off. If the plan file goes missing, turns and the banner say so, and plan mode stays on until `/plan off`.
+
 ### Room commands
 
 | Command                            | Action                                                                             |
@@ -141,6 +160,9 @@ Pins are saved with each conversation and survive resume. Pin any human or agent
 | `/reconnect @agent`                | Reconnect with that participant's work paused                                      |
 | `/compact [@agent] [instructions]` | Compact one agent, or all enabled and ready agents; optional focus where supported |
 | `/checkpoint`                      | Read the latest checkpoint and its source message IDs                              |
+| `/plan`                            | Create a plan file, attach it and turn plan mode on                                |
+| `/plan resume [name or path]`      | List this workspace's plans, or attach one and turn plan mode on                   |
+| `/plan off`                        | Detach the plan and end plan mode                                                  |
 | `/retry #m1 @agent`                | Explicitly queue a failed or interrupted response again                            |
 | `/questions`                       | List open questions, choices, consultation state and advice                        |
 | `/ask-room #m2`                    | Gather attributed opinions; leave the final decision to the human                  |

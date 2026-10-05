@@ -26,7 +26,8 @@ The public declarations are the exported types and function signatures of
 | `providerDefault(value?)`                                | Pure                                 | The `'provider default'` fallback for a missing model or effort                |
 
 `room` is a `RoomSource`: the structural surface `Room` satisfies (`config`,
-`session`, `fatal`, `isIdle()`, `pending(id)`, `initialImageSupport(id)`). The
+`session`, `fatal`, `isIdle()`, `pending(id)`, `initialImageSupport(id)`, and
+the optional `planStatus()`, which checks the attached plan file when read). The
 module imports no engine code; its runtime dependencies are `command-access.ts`
 and `participant-status.ts`, so browser code can import it.
 
@@ -63,17 +64,18 @@ are omitted by JSON.
 Every field of the browser wire state except the transport fields `instanceId`
 and `revision`, which `WebState` adds on top.
 
-| Field                      | Meaning                                                                                                                                 |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspace`                | Launch directory                                                                                                                        |
-| `humanName`                | Configured display name, resolved to `'You'`                                                                                            |
-| `permissions`              | The room-wide policy the session carries, copied from current config                                                                    |
-| `commandAccess`            | Config value, or `resolveCommandAccess(config)` when config has none; `mode` is the header's command mode, `source` marks a trust grant |
-| `commandAccessDescription` | `commandAccessSummary(config)`, the single description authority                                                                        |
-| `idle`                     | No run, connection or maintenance in progress                                                                                           |
-| `fatal`                    | Present only when the room stopped; renderers show it verbatim                                                                          |
-| `sessionAgentIds`          | Every session agent in insertion order, including agents removed from config                                                            |
-| `agents`                   | Config-first union of configured and session agents, see below                                                                          |
+| Field                      | Meaning                                                                                                                                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workspace`                | Launch directory                                                                                                                                                                                                                                                         |
+| `humanName`                | Configured display name, resolved to `'You'`                                                                                                                                                                                                                             |
+| `permissions`              | The room-wide policy the session carries, copied from current config                                                                                                                                                                                                     |
+| `commandAccess`            | Config value, or `resolveCommandAccess(config)` when config has none; `mode` is the header's command mode, `source` marks a trust grant                                                                                                                                  |
+| `commandAccessDescription` | `commandAccessSummary(config)`, the single description authority                                                                                                                                                                                                         |
+| `idle`                     | No run, connection or maintenance in progress                                                                                                                                                                                                                            |
+| `fatal`                    | Present only when the room stopped; renderers show it verbatim                                                                                                                                                                                                           |
+| `sessionAgentIds`          | Every session agent in insertion order, including agents removed from config                                                                                                                                                                                             |
+| `agents`                   | Config-first union of configured and session agents, see below                                                                                                                                                                                                           |
+| `plan`                     | Present only while plan mode is on: the attached plan's resolved `path`, its file `name`, and `missing` when the file is gone or no longer a regular, unlinked file. Read fresh from the file system for each projection; the browser banner and terminal header show it |
 
 `session`: `id`, `createdAt`, `paused`, optional `recoveryRequired`,
 `composerDraft` (`''` when unset), `composerAttachments` (`[]` when unset),

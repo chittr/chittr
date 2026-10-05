@@ -9,6 +9,7 @@ Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://
 - The browser sidebar has a **System / Light / Dark** theme picker. **System** follows the operating system setting and is the default. A Light or Dark choice applies before the page first draws and is remembered across launches in a `chittr-theme` cookie, because each launch uses a new port and per-port browser storage would forget it.
 - `chittr update` updates a verified npm-global installation to npm's latest release,
   with version and Node compatibility checks, streamed npm output and a backup reminder.
+- Plan mode keeps one Markdown plan beside a conversation. `/plan` creates an empty plan and attaches it, `/plan resume` lists or attaches an existing one, and `/plan off` detaches it. While a plan is attached, agents can write that file and no other, whatever `permissions.edits` says, and commands run sandboxed without account access. Each turn tells agents whether the plan changed and includes its text up to 32 KiB. An agent's write is refused if you changed the plan since it last saw it. The browser shows a banner with copy and Open buttons, and the terminal header shows the plan path. Plan mode is saved with the conversation. The new `plans.location` setting chooses where plans are created: `user` (the default), `directory`, or a path.
 
 ## [0.2.0] - 2026-10-02
 

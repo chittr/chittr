@@ -551,6 +551,30 @@ function App() {
             </button>
           </div>
         </header>
+        {state?.plan && (
+          <section
+            className={`plan-banner${state.plan.missing ? ' is-missing' : ''}`}
+            aria-label="Plan mode"
+          >
+            <strong>Plan mode</strong>
+            {/* Right-to-left overflow keeps the file name visible in a long path. */}
+            <code dir="rtl" title={state.plan.path}>
+              <bdi dir="ltr">{state.plan.path}</bdi>
+            </code>
+            {state.plan.missing && <span role="status">File missing</span>}
+            <CopyButton text={state.plan.path} label="Copy plan path" />
+            <button
+              disabled={!live || state.plan.missing}
+              onClick={() =>
+                void api('plan/open', { sessionId: state.session.id }).catch((failure) =>
+                  composer.report(failure.message),
+                )
+              }
+            >
+              Open
+            </button>
+          </section>
+        )}
         <section className="participant-strip" aria-label="Agent activity">
           {state?.agents
             .filter((a) => a.enabled)

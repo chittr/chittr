@@ -23,6 +23,7 @@ export const commands = [
   '/reconnect',
   '/compact',
   '/checkpoint',
+  '/plan',
   '/reload',
   '/config',
   '/participants',

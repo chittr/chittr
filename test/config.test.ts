@@ -451,3 +451,49 @@ it.each(['', '  ', 'Bill\nJones', '\x1b[31mBill', 'x'.repeat(81)])(
     expect(() => loadConfig(project, home)).toThrow();
   },
 );
+
+it('resolves plans.location, lets the project value replace the user value, and rejects relative paths', () => {
+  const { root, home, project } = fixture();
+  const user = join(home, '.agents/chittr.yaml');
+  const local = join(project, '.agents/chittr.yaml');
+  const workspace = realpathSync(project);
+  const derived = workspace.replaceAll('/', '-');
+  const roster = 'skills: {enabled: false}\ndefaultAgents: {codex: {provider: codex}}\n';
+  writeFileSync(user, `version: 1\n${roster}`);
+  const defaults = loadConfig(project, home)!;
+  expect(defaults.plans).toEqual({
+    location: 'user',
+    folder: join(home, '.agents/chittr/plans', derived),
+  });
+  expect(defaults.provenance['plans.location']).toBeUndefined();
+  writeFileSync(user, `version: 1\n${roster}plans: {location: directory}\n`);
+  const directory = loadConfig(project, home)!;
+  expect(directory.plans).toEqual({
+    location: 'directory',
+    folder: join(workspace, '.agents/chittr/plans'),
+  });
+  expect(directory.provenance['plans.location']).toBe(user);
+  for (const [value, location, folder] of [
+    ['"~/team plans"', '~/team plans', join(home, 'team plans', derived)],
+    [join(root, 'shared'), join(root, 'shared'), join(root, 'shared', derived)],
+    ['{}', 'user', join(home, '.agents/chittr/plans', derived)],
+  ] as const) {
+    writeFileSync(
+      local,
+      `version: 1\nplans: ${value.startsWith('{') ? value : `{location: ${value}}`}\n`,
+    );
+    const replaced = loadConfig(project, home)!;
+    expect(replaced.plans).toEqual({ location, folder });
+    expect(replaced.provenance['plans.location']).toBe(realpathSync(local));
+  }
+  for (const value of ['plans', './plans', '~', '~other/plans', 'users']) {
+    writeFileSync(local, `version: 1\nplans: {location: "${value}"}\n`);
+    expect(() => loadConfig(project, home)).toThrow(
+      `${realpathSync(local)}: plans.location: Use user, directory, or an absolute or ~/ path; relative paths are not supported`,
+    );
+  }
+  for (const value of ['{location: ""}', '{folder: /tmp}']) {
+    writeFileSync(local, `version: 1\nplans: ${value}\n`);
+    expect(() => loadConfig(project, home)).toThrow(realpathSync(local));
+  }
+});

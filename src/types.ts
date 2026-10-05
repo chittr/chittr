@@ -1,5 +1,23 @@
 import type { Provider } from './providers.js';
 export type { Provider } from './providers.js';
+/**
+ * Where one participant's tool services read plan mode at call time. The directory is
+ * host-owned and lives outside the workspace and every tool scratch directory, so no
+ * sandboxed command can rewrite the state that admits the plan path.
+ */
+export interface PlanStateLocation {
+  directory: string;
+  agent: string;
+}
+/** The plan object of a normal turn while plan mode is on. */
+export interface PlanTurn {
+  path: string;
+  /** Whether the plan changed since this agent last received or read it, or is missing. */
+  status: 'changed' | 'unchanged' | 'missing';
+  /** Present only when the plan changed and is at most 32 KiB. */
+  text?: string;
+  rules: string[];
+}
 export interface SkillAccess {
   path: string;
   root: string;
@@ -34,6 +52,8 @@ export interface AgentConfig {
   instructions: string;
   /** Session-owned guidance supplied by Room to adapters, never loaded from agent YAML. */
   conversationInstructions?: string;
+  /** Room-owned plan-mode state for this participant's tool services; never fingerprinted. */
+  planState?: PlanStateLocation;
   fingerprint: string;
   skills?: SkillCatalog;
 }
@@ -44,6 +64,8 @@ export interface RoomConfig {
   humanName?: string;
   permissions: Permissions;
   commandAccess?: CommandAccess;
+  /** `plans.location` and the folder it selects for new plans in this workspace. */
+  plans?: { location: string; folder: string };
   skills?: { enabled: boolean };
   followUpTurns: number;
   agents: Record<string, AgentConfig>;
@@ -136,6 +158,8 @@ export interface TurnInput {
   humanName?: string;
   summary?: string;
   history?: Message[];
+  /** Present on normal turns while plan mode is on. */
+  plan?: PlanTurn;
 }
 export interface MaintenanceRequest {
   id: string;
@@ -294,4 +318,11 @@ export interface Session {
   checkpoints?: Checkpoint[];
   handoffs?: Record<string, Handoff>;
   recoveryRequired?: boolean;
+  /** Present while plan mode is on: the attached plan and each agent's recorded plan hash. */
+  plan?: SavedPlan;
+}
+export interface SavedPlan {
+  /** The resolved absolute path of the attached plan file. */
+  path: string;
+  hashes: Record<string, string>;
 }

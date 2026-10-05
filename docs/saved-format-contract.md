@@ -136,6 +136,20 @@ initial save fails, Room enters its existing fatal/paused storage-failure state
 without delivering the brief to a provider. Subsequent save failures retain
 the existing dispatch hold.
 
+`Session.plan` is optional version-1 core data, present only while plan mode is
+on. It has exactly `path`, the attached plan's resolved absolute path ending in
+`.md`, and `hashes`, a record from agent id to the 64-hex SHA-256 of the plan
+bytes that agent last received or read. `savedPlanSchema` in `src/store.ts` is
+its strict schema; save validates it before writes and load validates it at the
+core gate. An attached path means plan mode is on. Missing data in an older
+session means plan mode is off. An invalid field is rejected rather than dropped,
+because dropping it would turn plan mode off and widen writes on resume.
+
+| Class    | Plan condition                                                                 | Result                                                                 | File effect                        | Evidence                                                            |
+| -------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------- |
+| accepted | Field absent or valid                                                          | Load the session; a present path reopens it in plan mode               | Normal existing load rules         | `test/plan-mode.test.ts` "saved plan mode"; legacy fixture          |
+| rejected | Path not absolute or not `.md`, a hash not 64 hex characters, an unknown field | `Saved session is invalid or unsupported; it has not been overwritten` | No session or latest-index rewrite | `test/saved-format.test.ts` "rejects a plan … with its own message" |
+
 `load(id?)` (`src/store.ts:238-391`) runs in a fixed order: resolve the pointer,
 check the id shape, parse the file, apply the core gate, apply the history and
 draft gates, normalize legacy questions, then recover auxiliary records. Every
@@ -243,6 +257,11 @@ preserves unknown top-level fields through load/save but does not apply
 `launchBrief` to prompts. This is a property of that baseline, not a general
 downgrade guarantee. Resuming with an older build does not preserve the new
 instruction behavior.
+
+A saved plan path restores plan mode exactly as left, which narrows writes to
+that one file; it never grants anything beyond reading and writing it. The tool
+service still checks the path at each call: it must end in `.md`, be a regular
+file that is not a symlink, resolve to itself and lie outside every skill bundle.
 
 Saved `permissions`, `commandMode`, each agent's `fingerprint` and each agent's
 provider `sessionId` are data about the past. They are not authorization and not

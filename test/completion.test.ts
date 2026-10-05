@@ -55,6 +55,14 @@ it('lists folders first and preserves ./ while keeping ordinary Tab completion',
   expect(browse('Inspect a').suggestions).toEqual(['`a.txt` ']);
   expect(browse('@cod').suggestions).toEqual(['@codex ']);
   expect(browse('/part').suggestions).toEqual(['/participants ']);
+  expect(browse('/pl').suggestions).toEqual(['/plan ']);
+  expect(browse('/p').suggestions).toEqual([
+    '/pause ',
+    '/pin ',
+    '/pins ',
+    '/plan ',
+    '/participants ',
+  ]);
 });
 
 it('round trips spaces, quotes and backslashes when entering folders and selecting files', () => {

@@ -90,6 +90,52 @@ function fit(text: string, width: number): string {
 export function composerPrefix(name: string, width: number): string {
   return `${fit(name, Math.min(20, Math.max(1, width - 8)))} › `;
 }
+/** Whether the terminal renders OSC 8 hyperlinks; others get plain text. */
+export function supportsHyperlinks(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.FORCE_HYPERLINK !== undefined) return env.FORCE_HYPERLINK !== '0';
+  if (
+    ['iTerm.app', 'WezTerm', 'vscode', 'ghostty', 'Hyper', 'WarpTerminal'].includes(
+      env.TERM_PROGRAM ?? '',
+    )
+  )
+    return true;
+  if (env.KITTY_WINDOW_ID || env.WT_SESSION) return true;
+  return Number(env.VTE_VERSION) >= 5000;
+}
+/** An OSC 8 file link. BEL-terminated and percent-encoded, so it measures and strips as `text`. */
+export function fileLink(path: string, text: string): string {
+  const url = [...Buffer.from(path)]
+    .map((byte) => {
+      const char = String.fromCharCode(byte);
+      return byte < 128 && /[A-Za-z0-9/._~-]/.test(char)
+        ? char
+        : `%${byte.toString(16).toUpperCase().padStart(2, '0')}`;
+    })
+    .join('');
+  return `\x1b]8;;file://${url}\x07${text}\x1b]8;;\x07`;
+}
+/** The persistent header line while plan mode is on. */
+export function planLine(
+  plan: RoomSnapshot['plan'],
+  width: number,
+  links = supportsHyperlinks(),
+): string | undefined {
+  if (!plan) return undefined;
+  const label = plan.missing ? 'plan mode · file missing · ' : 'plan mode · ';
+  // A file name can hold control sequences: show it flattened, keep the real path in the link.
+  const shown = cleanText(plan.path)
+    .replace(/[\n\u2028\u2029]/g, ' ')
+    .replace(/[\u0080-\u009f]/g, '');
+  // Keep the file name visible: a long path loses its leading directories first.
+  const available = Math.max(1, width - stringWidth(label));
+  const characters = [...shown];
+  let path = shown;
+  while (characters.length > 1 && stringWidth(path) > available) {
+    characters.shift();
+    path = '…' + characters.join('');
+  }
+  return `${amber}${label}${reset}${links && !plan.missing ? fileLink(plan.path, path) : path}`;
+}
 /** Render the conversation body from the public display projection. */
 export function transcript(snapshot: RoomSnapshot, width: number): DisplayLine[] {
   const lines: DisplayLine[] = [];
@@ -704,6 +750,8 @@ export class TerminalUI {
       `${cyan}CHITTR${reset}  ${dim}${fit(snapshot.workspace, Math.max(1, width - 11))}${reset}`,
       `${dim}${fit(`session ${session.id.slice(0, 8)} · ${session.paused ? 'PAUSED' : 'room open'} · commands ${snapshot.commandAccess.mode} · edits ${policy.edits ? 'on' : 'off'} · network ${policy.network ? 'on' : 'off'}`, width)}${reset}`,
     ];
+    const plan = planLine(snapshot.plan, width);
+    if (plan) header.push(plan);
     if (snapshot.commandAccess.source) {
       const summary = snapshot.commandAccessDescription;
       for (const line of wrapped(summary, width).slice(0, Math.max(1, Math.min(4, height - 12))))

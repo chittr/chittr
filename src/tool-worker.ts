@@ -15,6 +15,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { resolve, relative, isAbsolute, dirname, join } from 'node:path';
 import { skillPath, isSkillPath, type SkillAccess } from './skill-access.js';
+import { checkedPlanPath } from './plan.js';
 
 export function inside(root: string, path: string): boolean {
   const rel = relative(root, path);
@@ -54,12 +55,18 @@ export function fileOperation(
   tool: string,
   args: Record<string, any>,
   skills: SkillAccess[] = [],
+  plan?: string,
+  planSkills: SkillAccess[] = [],
 ): unknown {
   const readPath = (path: string) =>
     skillPath(resolve(root, path), skills) ?? checkedPath(root, path);
   const display = (path: string) => (inside(root, path) ? relative(root, path) : path);
+  // In plan mode, the attached plan is the one path admitted outside these rules.
+  const isPlan = (path: string) => plan !== undefined && resolve(root, path) === plan;
+  // Bundles discovered for any participant in the room exclude the plan, not only this one's.
+  const checkedPlan = () => checkedPlanPath(plan!, [...skills, ...planSkills]);
   if (tool === 'read_file') {
-    const file = readPath(args.path);
+    const file = isPlan(args.path) ? checkedPlan() : readPath(args.path);
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const stat = fstatSync(fd);
@@ -127,6 +134,19 @@ export function fileOperation(
       note: 'Recursive listing skips .git and node_modules contents; request either directory explicitly to inspect it.',
     };
   }
+  if (tool === 'write_file' && plan !== undefined) {
+    if (!isPlan(args.path)) throw new Error('Plan mode allows writing only the attached plan');
+    // The plan must already exist: no folder creation and no O_CREAT.
+    const file = checkedPlan();
+    const fd = openSync(file, constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW);
+    try {
+      if (!fstatSync(fd).isFile()) throw new Error('Path is not a regular file');
+      writeSync(fd, args.text);
+    } finally {
+      closeSync(fd);
+    }
+    return { path: display(file), writtenBytes: Buffer.byteLength(args.text) };
+  }
   if (tool === 'write_file') {
     if (isSkillPath(resolve(root, args.path), skills))
       throw new Error('Skill bundles are read-only, even when workspace edits are enabled');
@@ -169,6 +189,8 @@ if (
             request.tool,
             request.args,
             request.skillAccess ?? [],
+            request.plan,
+            request.planSkills ?? [],
           ),
         }),
       );
