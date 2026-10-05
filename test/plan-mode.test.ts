@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -938,6 +939,25 @@ describe('plan data in turns', () => {
     const input = f.fakes.codex!.inputs[0]!;
     expect(input.messages.map((message) => message.text)).toEqual(['Discuss v2']);
     expect(input.plan).toMatchObject({ status: 'changed', text: '# Plan v2\n' });
+  });
+
+  it('fails a turn whose plan hash cannot be recorded, without calling the provider', async () => {
+    const { f, room } = await planRoom('# Plan\n');
+    const agents = join(f.fakes.codex!.agent.planState!.directory, 'agents');
+    chmodSync(agents, 0o500);
+    try {
+      room.send('Discuss');
+      await expect
+        .poll(() => room.session.messages.at(-1)!.deliveries.codex!.status)
+        .toBe('failed');
+      expect(f.fakes.codex!.inputs).toEqual([]);
+      expect(room.session.notices.some((notice) => notice.text.startsWith('codex failed:'))).toBe(
+        true,
+      );
+      await expect.poll(() => room.isIdle()).toBe(true);
+    } finally {
+      chmodSync(agents, 0o700);
+    }
   });
 
   it('fails a turn whose plan state cannot be read instead of inventing plan data', async () => {

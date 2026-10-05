@@ -1018,7 +1018,9 @@ export class Room extends EventEmitter {
     // Recorded only as the provider receives the turn. A failed turn that brought new plan text
     // clears it again, unless a tool recorded since (seq tells identical bytes apart).
     let shown: { hash?: string; seq: number } | undefined;
-    const run = () => {
+    // Async with no await before adapter.run: the provider is still called synchronously, and a
+    // throw while recording becomes a rejection on the failure path instead of escaping dispatch.
+    const run = async () => {
       if (plan?.record !== undefined) {
         this.plans.record(id, plan.record);
         if (plan.plan.status === 'changed') shown = this.plans.snapshot(id);
