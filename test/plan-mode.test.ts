@@ -23,9 +23,13 @@ import { IsolatedRuntime } from '../src/adapters/isolated.js';
 import { forwardCommand } from '../src/command-broker.js';
 import { instructions, turnPrompt } from '../src/protocol.js';
 import { projectRoom } from '../src/snapshot.js';
+import { spawn } from 'node:child_process';
+import { closeSync } from 'node:fs';
 import {
   createPlanFile,
   planFileName,
+  planLockFile,
+  tryPlanLock,
   planFolder,
   planHash,
   planStateRoot,
@@ -739,6 +743,94 @@ describe('plan data in turns', () => {
     const refused = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
     expect(refused.reason.message).toContain('Reread it with read_file');
     expect(readFileSync(plan, 'utf8')).toBe(texts[written]);
+  });
+
+  it('serializes writes to one plan from two rooms in different workspaces', async () => {
+    const first = await planRoom('# Plan\n');
+    const second = fixture();
+    const controller = second.controller();
+    await controller.room.start();
+    await controller.submit(`/plan resume ${first.plan}`);
+    await first.turn();
+    controller.room.send('Discuss');
+    await tick();
+    second.fakes.codex!.finish();
+    await tick();
+    const texts = ['# First room\n', '# Second room\n'];
+    const results = await Promise.allSettled([
+      first.tools.call('write_file', { path: first.plan, text: texts[0]! }),
+      second.fakes.codex!.tools.call('write_file', { path: first.plan, text: texts[1]! }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const written = results.findIndex((result) => result.status === 'fulfilled');
+    expect(readFileSync(first.plan, 'utf8')).toBe(texts[written]);
+  });
+
+  it('waits for a plan lock holder and proceeds when that process dies without releasing it', async () => {
+    const { plan, turn, tools } = await planRoom('# Plan\n');
+    await turn();
+    const holder = spawn(
+      process.execPath,
+      [
+        '-e',
+        `require('node:fs').openSync(${JSON.stringify(planLockFile(plan))}, 0x2 | 0x200 | 0x4 | 0x20, 0o600); console.log('locked'); setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    cleanups.push(() => void holder.kill('SIGKILL'));
+    await new Promise<void>((resolve) => holder.stdout!.once('data', () => resolve()));
+    let settled = false;
+    const write = tools
+      .call('write_file', { path: plan, text: '# After crash\n' })
+      .finally(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(settled).toBe(false);
+    expect(readFileSync(plan, 'utf8')).toBe('# Plan\n');
+    holder.kill('SIGKILL');
+    await write;
+    expect(readFileSync(plan, 'utf8')).toBe('# After crash\n');
+    expect(existsSync(planLockFile(plan))).toBe(true);
+  });
+
+  it('cancels a plan call waiting for the lock on interrupt, maintenance or close', async () => {
+    const { plan, turn, tools } = await planRoom('# Plan\n');
+    await turn();
+    const write = (text: string) => tools.call('write_file', { path: plan, text });
+    let lock = tryPlanLock(plan)!;
+    expect(lock).toBeDefined();
+    const interrupted = write('# Interrupted\n');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    tools.interrupt();
+    await expect(interrupted).rejects.toThrow('Interrupted');
+    const maintenance = write('# Maintenance\n');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    tools.setMaintenance(true);
+    await expect(maintenance).rejects.toThrow('Interrupted');
+    tools.setMaintenance(false);
+    // A maintenance flip this process did not interrupt (an MCP child's view) is rechecked on entry.
+    const rechecked = write('# Rechecked\n');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    writeFileSync(tools.maintenanceFile, JSON.stringify({ active: true }));
+    closeSync(lock);
+    await expect(rechecked).rejects.toThrow('Task tools are denied during context maintenance');
+    tools.setMaintenance(false);
+    lock = tryPlanLock(plan)!;
+    const closed = write('# Closed\n');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    tools.close();
+    closeSync(lock);
+    await expect(closed).rejects.toThrow(/Interrupted|Tool service closed/);
+    expect(readFileSync(plan, 'utf8')).toBe('# Plan\n');
+  });
+
+  it('sends only the change flag while another agent holds the plan lock', async () => {
+    const { plan, turn } = await planRoom('# Plan\n');
+    const lock = tryPlanLock(plan)!;
+    const during = await turn();
+    closeSync(lock);
+    expect(during.plan).toEqual({ path: plan, status: 'changed', rules: during.plan!.rules });
+    expect((await turn()).plan).toMatchObject({ status: 'changed', text: '# Plan\n' });
+    expect((await turn()).plan!.status).toBe('unchanged');
   });
 
   it('includes the plan again after the provider compacts during a turn', async () => {

@@ -14,7 +14,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isSkillPath } from './skill-access.js';
 import type { PlanStateLocation, PlanTurn, SkillAccess } from './types.js';
 import { planAdjectives, planNouns } from './plan-words.js';
@@ -254,47 +254,53 @@ export function readPlanMode(
     skills: value.skills.map(({ path, root }: SkillAccess) => ({ path, root })),
   };
 }
+// macOS open(2) flag that takes an exclusive flock on open. The kernel releases it when the
+// descriptor closes or its process exits, so a crashed holder never leaves a stale lock.
+const exclusiveLock = process.platform === 'darwin' ? 0x20 : 0;
 /**
- * Hold the room's plan lock across processes while `action` checks and touches the plan,
- * so two agents cannot both pass the hash guard against the same version.
+ * The lock file for one resolved plan path, shared by every room and process of this user.
+ * Lock files are never removed: removing one could split holders across two inodes.
+ */
+export function planLockFile(path: string): string {
+  return join(planStateRoot, 'locks', `${planHash(path)}.lock`);
+}
+/** Take the plan's lock without waiting, returning its descriptor, or undefined while held. */
+export function tryPlanLock(path: string): number | undefined {
+  const file = planLockFile(path);
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  try {
+    return openSync(
+      file,
+      constants.O_RDWR | constants.O_CREAT | constants.O_NONBLOCK | exclusiveLock,
+      0o600,
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EAGAIN' || code === 'EWOULDBLOCK') return undefined;
+    throw error;
+  }
+}
+/**
+ * Hold the plan's lock while `action` checks and touches the plan, so no two agents, rooms or
+ * processes can both pass the hash guard against the same version.
  */
 export async function withPlanLock<T>(
-  directory: string,
+  path: string,
   action: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const lock = join(directory, 'plan.lock');
   const deadline = Date.now() + 15000;
-  for (;;) {
-    signal?.throwIfAborted();
-    try {
-      writeFileSync(lock, String(process.pid), { flag: 'wx', mode: 0o600 });
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    let holder = '';
-    try {
-      holder = readFileSync(lock, 'utf8');
-      if (Number(holder)) process.kill(Number(holder), 0);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') continue;
-      // A holder that exited without releasing leaves a stale lock.
-      if (code === 'ESRCH') {
-        try {
-          if (readFileSync(lock, 'utf8') === holder) rmSync(lock, { force: true });
-        } catch {}
-        continue;
-      }
-    }
+  let fd = tryPlanLock(path);
+  while (fd === undefined) {
+    if (signal?.aborted) throw new Error('Interrupted');
     if (Date.now() > deadline) throw new Error('Another plan read or write is in progress; retry');
     await new Promise((resolve) => setTimeout(resolve, 20));
+    fd = tryPlanLock(path);
   }
   try {
     return await action();
   } finally {
-    rmSync(lock, { force: true });
+    closeSync(fd);
   }
 }
 /** One agent's recorded plan hash and its count of successful plan writes. */

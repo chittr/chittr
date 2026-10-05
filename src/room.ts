@@ -20,7 +20,7 @@ import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
-import { rmSync } from 'node:fs';
+import { closeSync, rmSync } from 'node:fs';
 import type {
   RoomConfig,
   Session,
@@ -46,6 +46,7 @@ import {
   planRules,
   planTurn,
   resolvePlanArgument,
+  tryPlanLock,
 } from './plan.js';
 import type { Persistence } from './store.js';
 import { attachmentLimits, validateAttachmentSet, type AttachmentAccess } from './attachments.js';
@@ -316,13 +317,20 @@ export class Room extends EventEmitter {
   private planTurn(id: string): PlanTurn | undefined {
     const path = this.session.plan?.path;
     if (!path) return undefined;
+    // A flag-only turn records nothing, so plan writes stay refused until a read.
+    const flagOnly: PlanTurn = { path, status: 'changed', rules: planRules };
+    let lock: number | undefined;
     try {
+      // Never read a write in progress: while an agent holds the plan's lock, send the flag only.
+      lock = tryPlanLock(path);
+      if (lock === undefined) return flagOnly;
       const { plan, record } = planTurn(path, this.plans.recorded(id));
       if (record !== undefined) this.plans.record(id, record);
       return plan;
     } catch {
-      // Unreadable plan state records nothing: a flag-only turn, and plan writes stay refused.
-      return { path, status: 'changed', rules: planRules };
+      return flagOnly;
+    } finally {
+      if (lock !== undefined) closeSync(lock);
     }
   }
   private state(id: string): AgentState {

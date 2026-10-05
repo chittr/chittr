@@ -307,10 +307,13 @@ export class ToolService {
         'Chittr file worker is missing. Reinstall the same @chittr/cli package. In a source checkout, run npm run build.',
       );
   }
-  async call(tool: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
+  private assertCallable(): void {
     if (this.closed) throw new Error('Tool service closed');
     if (JSON.parse(readFileSync(this.maintenanceFile, 'utf8')).active !== false)
       throw new Error('Task tools are denied during context maintenance');
+  }
+  async call(tool: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
+    this.assertCallable();
     if (!Object.hasOwn(toolInputs, tool)) throw new Error(`Unknown task tool: ${tool}`);
     const name = tool as ToolName;
     const input = toolInputs[name].parse(args);
@@ -345,14 +348,41 @@ export class ToolService {
       throw new Error(
         `Missing permission: permissions.${required}=true. Explain this to the human; a YAML config change and idle /reload are required. No temporary grant is available.`,
       );
-    if (!planFile) return this.run(name, input, mode, undefined, signal);
-    // The lock spans the guard, the worker and the recorded hash, across host and MCP processes.
+    if (signal?.aborted) throw new Error('Interrupted');
+    // Registered before any lock wait, so interrupt, close and maintenance cancel a queued call.
+    const controller = new AbortController();
+    this.controllers.add(controller);
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      if (!planFile) return await this.run(name, input, mode, undefined, controller, signal);
+      return await this.planCall(name, input, mode!, planFile, controller, signal);
+    } finally {
+      signal?.removeEventListener('abort', abort);
+      this.controllers.delete(controller);
+    }
+  }
+  /**
+   * A read or write of the attached plan. The plan's lock spans the guard, the worker and the
+   * recorded hash, across agents, rooms and processes.
+   */
+  private planCall(
+    name: ToolName,
+    input: ToolInput,
+    mode: NonNullable<PlanMode>,
+    planFile: string,
+    controller: AbortController,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const location = this.planState!;
     return withPlanLock(
-      location.directory,
+      planFile,
       async () => {
+        // The call may have waited: lifecycle changes meanwhile still cancel it.
+        this.assertCallable();
+        if (controller.signal.aborted) throw new Error('Interrupted');
         // Bundles discovered for any participant, not only this one, exclude the plan.
-        checkedPlanPath(planFile, [...this.skillAccess, ...mode!.skills]);
+        checkedPlanPath(planFile, [...this.skillAccess, ...mode.skills]);
         const bytes = readPlan(planFile);
         if (!bytes) throw new Error(`The plan file is missing: ${planFile}`);
         const current = planHash(bytes);
@@ -360,7 +390,7 @@ export class ToolService {
           throw new Error(
             'The plan changed since you last received or read it. Reread it with read_file, then retry the write.',
           );
-        const result = await this.run(name, input, mode, planFile, signal);
+        const result = await this.run(name, input, mode, planFile, controller, signal);
         if (name === 'write_file')
           recordAgentPlan(
             location,
@@ -370,7 +400,7 @@ export class ToolService {
         else recordAgentPlan(location, current);
         return result;
       },
-      signal,
+      controller.signal,
     );
   }
   private async run(
@@ -378,176 +408,165 @@ export class ToolService {
     input: ToolInput,
     mode: PlanMode,
     planFile: string | undefined,
+    controller: AbortController,
     signal?: AbortSignal,
   ): Promise<unknown> {
     const plan = mode?.path;
-    if (signal?.aborted) throw new Error('Interrupted');
-    const controller = new AbortController();
-    this.controllers.add(controller);
-    const abort = () => controller.abort();
-    signal?.addEventListener('abort', abort, { once: true });
-    try {
-      if (name === 'read_attachment') {
-        try {
-          const turn = this.attachmentTurn();
-          const registration = JSON.parse(turn);
-          if (
-            typeof registration.provider !== 'string' ||
-            !registeredImageMapping(registration.bridge, registration.provider)
-          )
-            return registration.bridge === 'unavailable' &&
-              typeof registration.retrievalReason === 'string'
-              ? {
-                  ...retrievalUnavailable,
-                  message: `${retrievalUnavailable.message} ${registration.retrievalReason}`,
-                }
-              : retrievalUnavailable;
-          const id = (input as z.infer<typeof toolInputs.read_attachment>).attachment_id;
-          const history = JSON.parse(readFileSync(this.historyFile, 'utf8')) as Message[];
-          const message = history.find((item) =>
-            item.attachments?.some((attachment) => attachment.id === id),
-          );
-          if (!message)
-            return {
-              error: 'attachment-not-found',
-              message: 'Attachment is not in the current public history.',
-            };
-          const metadata = message.attachments!.find((attachment) => attachment.id === id)!;
-          const resolved = this.attachmentAccess!.resolve(id);
-          if (JSON.stringify(metadata) !== JSON.stringify(resolved.metadata))
-            throw new Error('Attachment metadata mismatch');
-          const assertCurrent = () => {
-            if (controller.signal.aborted || signal?.aborted || this.attachmentTurn() !== turn)
-              throw new Error('Attachment turn ended');
-            const current = JSON.parse(readFileSync(this.historyFile, 'utf8')) as Message[];
-            if (
-              !current.some(
-                (item) =>
-                  item.id === message.id &&
-                  item.attachments?.some(
-                    (value) => JSON.stringify(value) === JSON.stringify(metadata),
-                  ),
-              )
-            )
-              throw new Error('Attachment left current history');
+    if (name === 'read_attachment') {
+      try {
+        const turn = this.attachmentTurn();
+        const registration = JSON.parse(turn);
+        if (
+          typeof registration.provider !== 'string' ||
+          !registeredImageMapping(registration.bridge, registration.provider)
+        )
+          return registration.bridge === 'unavailable' &&
+            typeof registration.retrievalReason === 'string'
+            ? {
+                ...retrievalUnavailable,
+                message: `${retrievalUnavailable.message} ${registration.retrievalReason}`,
+              }
+            : retrievalUnavailable;
+        const id = (input as z.infer<typeof toolInputs.read_attachment>).attachment_id;
+        const history = JSON.parse(readFileSync(this.historyFile, 'utf8')) as Message[];
+        const message = history.find((item) =>
+          item.attachments?.some((attachment) => attachment.id === id),
+        );
+        if (!message)
+          return {
+            error: 'attachment-not-found',
+            message: 'Attachment is not in the current public history.',
           };
-          assertCurrent();
-          return new AttachmentResult(message.id, resolved, assertCurrent, registration.bridge);
-        } catch (error) {
-          return attachmentFailure(error);
-        }
-      }
-      if (name === 'read_conversation') {
-        const query = input as z.infer<typeof toolInputs.read_conversation>;
-        const history = JSON.parse(readFileSync(this.historyFile, 'utf8')) as { id: string }[];
-        if (query.message_id)
-          return (
-            history.find((message) => message.id === query.message_id) ?? {
-              error: 'Message not found',
-            }
-          );
-        const offset = query.offset ?? 0,
-          limit = query.limit ?? 20;
-        return {
-          messages: history.slice(offset, offset + limit),
-          nextOffset: offset + limit < history.length ? offset + limit : null,
-          total: history.length,
+        const metadata = message.attachments!.find((attachment) => attachment.id === id)!;
+        const resolved = this.attachmentAccess!.resolve(id);
+        if (JSON.stringify(metadata) !== JSON.stringify(resolved.metadata))
+          throw new Error('Attachment metadata mismatch');
+        const assertCurrent = () => {
+          if (controller.signal.aborted || signal?.aborted || this.attachmentTurn() !== turn)
+            throw new Error('Attachment turn ended');
+          const current = JSON.parse(readFileSync(this.historyFile, 'utf8')) as Message[];
+          if (
+            !current.some(
+              (item) =>
+                item.id === message.id &&
+                item.attachments?.some(
+                  (value) => JSON.stringify(value) === JSON.stringify(metadata),
+                ),
+            )
+          )
+            throw new Error('Attachment left current history');
         };
+        assertCurrent();
+        return new AttachmentResult(message.id, resolved, assertCurrent, registration.bridge);
+      } catch (error) {
+        return attachmentFailure(error);
       }
-      if (name === 'fetch_url') {
-        const { url } = input as z.infer<typeof toolInputs.fetch_url>;
-        if (!['http:', 'https:'].includes(new URL(url).protocol))
-          throw new Error('Only HTTP(S) URLs are supported');
-        const response = await fetch(url, {
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
-        });
-        const reader = response.body?.getReader();
-        let bytes = 0;
-        const chunks: Uint8Array[] = [];
-        if (reader) {
-          try {
-            while (bytes < 65536) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              chunks.push(value.subarray(0, 65536 - bytes));
-              bytes += value.length;
-            }
-          } finally {
-            await reader.cancel();
-          }
-        }
-        return {
-          url: response.url,
-          status: response.status,
-          text: Buffer.concat(chunks).toString('utf8'),
-          truncated: bytes >= 65536,
-        };
-      }
-      const worker = name !== 'run_command';
-      const commandInput = input as z.infer<typeof toolInputs.run_command>;
-      if (!worker && this.commandRuntime?.endpoint)
-        return await forwardCommand(this.commandRuntime.endpoint, commandInput, controller.signal);
-      // Plan mode sends trusted commands through the sandbox, without account access.
-      if (!worker && this.commandMode === 'trusted' && plan === undefined) {
-        const result = await runProcess('/bin/sh', ['-c', commandInput.command], {
-          cwd: this.workspace,
-          env: this.commandRuntime!.environment,
-          signal: controller.signal,
-          timeout: commandInput.timeout_ms ?? 30000,
-        });
-        return { exitCode: result.code, stdout: result.stdout, stderr: result.stderr };
-      }
-      const command = worker ? process.execPath : '/bin/sh';
-      const args = worker
-        ? [builtFile('tool-worker.js'), '--worker']
-        : ['-c', commandInput.command];
-      const result = await runProcess(
-        '/usr/bin/sandbox-exec',
-        [
-          '-p',
-          sandboxProfile(
-            this.workspace,
-            plan === undefined ? this.permissions : { ...this.permissions, edits: false },
-            this.scratch,
-            worker,
-            this.skillAccess,
-            planFile,
-          ),
-          command,
-          ...args,
-        ],
-        {
-          cwd: this.workspace,
-          signal: controller.signal,
-          timeout: worker ? 10000 : (commandInput.timeout_ms ?? 30000),
-          env: {
-            PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
-            LANG: 'en_US.UTF-8',
-            TMPDIR: this.scratch,
-          },
-          input: worker
-            ? JSON.stringify({
-                root: this.workspace,
-                tool: name,
-                args:
-                  'path' in input && typeof input.path === 'string' && input.path.startsWith('~/')
-                    ? { ...input, path: join(homedir(), input.path.slice(2)) }
-                    : input,
-                skillAccess: this.skillAccess,
-                ...(mode === undefined ? {} : { plan: mode.path, planSkills: mode.skills }),
-              })
-            : undefined,
-        },
-      );
-      if (!worker) return { exitCode: result.code, stdout: result.stdout, stderr: result.stderr };
-      if (result.code !== 0) throw new Error(result.stderr.trim() || 'Sandboxed file tool failed');
-      const parsed = JSON.parse(result.stdout);
-      if (parsed.error) throw new Error(parsed.error);
-      return parsed.result;
-    } finally {
-      signal?.removeEventListener('abort', abort);
-      this.controllers.delete(controller);
     }
+    if (name === 'read_conversation') {
+      const query = input as z.infer<typeof toolInputs.read_conversation>;
+      const history = JSON.parse(readFileSync(this.historyFile, 'utf8')) as { id: string }[];
+      if (query.message_id)
+        return (
+          history.find((message) => message.id === query.message_id) ?? {
+            error: 'Message not found',
+          }
+        );
+      const offset = query.offset ?? 0,
+        limit = query.limit ?? 20;
+      return {
+        messages: history.slice(offset, offset + limit),
+        nextOffset: offset + limit < history.length ? offset + limit : null,
+        total: history.length,
+      };
+    }
+    if (name === 'fetch_url') {
+      const { url } = input as z.infer<typeof toolInputs.fetch_url>;
+      if (!['http:', 'https:'].includes(new URL(url).protocol))
+        throw new Error('Only HTTP(S) URLs are supported');
+      const response = await fetch(url, {
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
+      });
+      const reader = response.body?.getReader();
+      let bytes = 0;
+      const chunks: Uint8Array[] = [];
+      if (reader) {
+        try {
+          while (bytes < 65536) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value.subarray(0, 65536 - bytes));
+            bytes += value.length;
+          }
+        } finally {
+          await reader.cancel();
+        }
+      }
+      return {
+        url: response.url,
+        status: response.status,
+        text: Buffer.concat(chunks).toString('utf8'),
+        truncated: bytes >= 65536,
+      };
+    }
+    const worker = name !== 'run_command';
+    const commandInput = input as z.infer<typeof toolInputs.run_command>;
+    if (!worker && this.commandRuntime?.endpoint)
+      return await forwardCommand(this.commandRuntime.endpoint, commandInput, controller.signal);
+    // Plan mode sends trusted commands through the sandbox, without account access.
+    if (!worker && this.commandMode === 'trusted' && plan === undefined) {
+      const result = await runProcess('/bin/sh', ['-c', commandInput.command], {
+        cwd: this.workspace,
+        env: this.commandRuntime!.environment,
+        signal: controller.signal,
+        timeout: commandInput.timeout_ms ?? 30000,
+      });
+      return { exitCode: result.code, stdout: result.stdout, stderr: result.stderr };
+    }
+    const command = worker ? process.execPath : '/bin/sh';
+    const args = worker ? [builtFile('tool-worker.js'), '--worker'] : ['-c', commandInput.command];
+    const result = await runProcess(
+      '/usr/bin/sandbox-exec',
+      [
+        '-p',
+        sandboxProfile(
+          this.workspace,
+          plan === undefined ? this.permissions : { ...this.permissions, edits: false },
+          this.scratch,
+          worker,
+          this.skillAccess,
+          planFile,
+        ),
+        command,
+        ...args,
+      ],
+      {
+        cwd: this.workspace,
+        signal: controller.signal,
+        timeout: worker ? 10000 : (commandInput.timeout_ms ?? 30000),
+        env: {
+          PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          LANG: 'en_US.UTF-8',
+          TMPDIR: this.scratch,
+        },
+        input: worker
+          ? JSON.stringify({
+              root: this.workspace,
+              tool: name,
+              args:
+                'path' in input && typeof input.path === 'string' && input.path.startsWith('~/')
+                  ? { ...input, path: join(homedir(), input.path.slice(2)) }
+                  : input,
+              skillAccess: this.skillAccess,
+              ...(mode === undefined ? {} : { plan: mode.path, planSkills: mode.skills }),
+            })
+          : undefined,
+      },
+    );
+    if (!worker) return { exitCode: result.code, stdout: result.stdout, stderr: result.stderr };
+    if (result.code !== 0) throw new Error(result.stderr.trim() || 'Sandboxed file tool failed');
+    const parsed = JSON.parse(result.stdout);
+    if (parsed.error) throw new Error(parsed.error);
+    return parsed.result;
   }
   interrupt(): void {
     this.endTurn();
