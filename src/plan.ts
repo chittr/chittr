@@ -289,9 +289,8 @@ export async function withPlanLock<T>(
   path: string,
   action: (lock: number) => Promise<T>,
   signal?: AbortSignal,
-  timeout = 15000,
 ): Promise<T> {
-  const deadline = Date.now() + timeout;
+  const deadline = Date.now() + 15000;
   let fd = tryPlanLock(path);
   while (fd === undefined) {
     if (signal?.aborted) throw new Error('Interrupted');
@@ -307,18 +306,27 @@ export async function withPlanLock<T>(
     closeSync(fd);
   }
 }
-/** One agent's recorded plan hash and its count of successful plan writes. */
-export function readAgentPlan(location: PlanStateLocation): { hash?: string; edits: number } {
+/**
+ * One agent's recorded plan hash, its count of successful plan writes, and `seq`, which every
+ * record advances, so a later record of identical bytes is still told apart.
+ */
+export function readAgentPlan(location: PlanStateLocation): {
+  hash?: string;
+  edits: number;
+  seq: number;
+} {
   let value;
   try {
     value = JSON.parse(readFileSync(agentFile(location), 'utf8'));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { edits: 0 };
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { edits: 0, seq: 0 };
     throw error;
   }
+  const count = (field: unknown) => (Number.isSafeInteger(field) ? (field as number) : 0);
   return {
     ...(typeof value?.hash === 'string' ? { hash: value.hash } : {}),
-    edits: Number.isSafeInteger(value?.edits) ? value.edits : 0,
+    edits: count(value?.edits),
+    seq: count(value?.seq),
   };
 }
 /** Record (or clear) one agent's plan hash; a successful plan write also counts an edit. */
@@ -327,8 +335,12 @@ export function recordAgentPlan(
   hash: string | undefined,
   edited = false,
 ): void {
-  const { edits } = readAgentPlan(location);
-  writeState(agentFile(location), { hash: hash ?? null, edits: edits + (edited ? 1 : 0) });
+  const { edits, seq } = readAgentPlan(location);
+  writeState(agentFile(location), {
+    hash: hash ?? null,
+    edits: edits + (edited ? 1 : 0),
+    seq: seq + 1,
+  });
 }
 
 /** Host-owned plan-mode state: the attached path and one hash file per agent. */
@@ -364,6 +376,11 @@ export class PlanState {
   }
   recorded(agent: string): string | undefined {
     return readAgentPlan(this.location(agent)).hash;
+  }
+  /** The agent's current record, to tell whether anything recorded since a snapshot. */
+  snapshot(agent: string): { hash?: string; seq: number } {
+    const { hash, seq } = readAgentPlan(this.location(agent));
+    return { ...(hash ? { hash } : {}), seq };
   }
   record(agent: string, hash: string | undefined): void {
     recordAgentPlan(this.location(agent), hash);

@@ -66,6 +66,8 @@ class Fake implements AgentAdapter {
   emit?: (event: AdapterEvent) => void;
   /** The provider session the next started adapter reports instead of resuming. */
   static nextSession?: string;
+  /** Called as each turn reaches the provider. */
+  static observe?: (input: TurnInput) => void;
   nativeCompaction = true;
   runtime: IsolatedRuntime;
   private pending?: { resolve: (result: TurnResult) => void; reject: (error: Error) => void };
@@ -89,6 +91,7 @@ class Fake implements AgentAdapter {
   run(input: TurnInput, event: (event: AdapterEvent) => void, signal: AbortSignal) {
     this.inputs.push(input);
     this.emit = event;
+    Fake.observe?.(input);
     return new Promise<TurnResult>((resolve, reject) => {
       this.pending = { resolve, reject };
       signal.addEventListener('abort', () => reject(new Error('Interrupted')), { once: true });
@@ -132,6 +135,7 @@ afterEach(async () => {
   if (savedTmpdir === undefined) delete process.env.TMPDIR;
   else process.env.TMPDIR = savedTmpdir;
   Fake.nextSession = undefined;
+  Fake.observe = undefined;
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -827,17 +831,18 @@ describe('plan data in turns', () => {
     expect(readFileSync(plan, 'utf8')).toBe('# Plan\n');
   });
 
-  it('prepares a turn after a plan write in progress, with the data the plan warrants', async () => {
+  it('keeps plan-mode work queued while a plan write holds the lock, then sends what the plan warrants', async () => {
     const { f, plan, room } = await planRoom('# Plan\n');
     const fake = () => f.fakes.codex!;
+    let inputs = 0;
     const held = async (message: string) => {
       const lock = tryPlanLock(plan)!;
       room.send(message);
       await new Promise((resolve) => setTimeout(resolve, 80));
       expect(fake().inputs).toHaveLength(inputs);
+      expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('queued');
       return lock;
     };
-    let inputs = 0;
     // An unseen short plan still arrives with its text once the writer lets go.
     closeSync(await held('Discuss'));
     await expect.poll(() => fake().inputs.length).toBe(++inputs);
@@ -850,49 +855,71 @@ describe('plan data in turns', () => {
     expect(fake().inputs.at(-1)!.plan!.status).toBe('unchanged');
     fake().finish();
     await tick();
-    // Stopping while the turn waits interrupts it without calling the provider.
-    const lock = await held('Stopped while waiting');
-    await room.stop('codex');
-    closeSync(lock);
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    expect(fake().inputs).toHaveLength(inputs);
-    expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('interrupted');
   });
 
-  it('follows the attachment as it stands when a waiting turn gets the lock', async () => {
+  it('dispatches promptly on /plan off or a switch even while the old plan stays locked', async () => {
     const { f, plan, controller, room } = await planRoom('# Plan A\n');
     const fake = () => f.fakes.codex!;
     const other = join(f.other, 'plan b.md');
     writeFileSync(other, '# Plan B\n');
-    let lock = tryPlanLock(plan)!;
-    room.send('Discuss');
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    await controller.submit('/plan off');
-    closeSync(lock);
-    await expect.poll(() => fake().inputs.length).toBe(1);
-    expect(fake().inputs[0]!.plan).toBeUndefined();
-    fake().finish();
-    await tick();
-    await controller.submit(`/plan resume ${plan}`);
-    lock = tryPlanLock(plan)!;
-    room.send('Again');
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    await controller.submit('/plan off');
-    await controller.submit(`/plan resume ${other}`);
-    closeSync(lock);
-    await expect.poll(() => fake().inputs.length).toBe(2);
-    expect(fake().inputs[1]!.plan).toMatchObject({
-      path: other,
-      status: 'changed',
-      text: '# Plan B\n',
-    });
-    // The hash recorded for that turn is plan B's, so the agent may write B without a reread.
-    await fake().tools.call('write_file', { path: other, text: '# Plan B\n\n- Agreed\n' });
-    fake().finish();
-    await tick();
+    const lock = tryPlanLock(plan)!;
+    try {
+      room.send('Discuss');
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(fake().inputs).toHaveLength(0);
+      await controller.submit('/plan off');
+      await expect.poll(() => fake().inputs.length).toBe(1);
+      expect(fake().inputs[0]!.plan).toBeUndefined();
+      fake().finish();
+      await tick();
+      await controller.submit(`/plan resume ${plan}`);
+      room.send('Again');
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(fake().inputs).toHaveLength(1);
+      await controller.submit('/plan off');
+      await controller.submit(`/plan resume ${other}`);
+      await expect.poll(() => fake().inputs.length).toBe(2);
+      expect(fake().inputs[1]!.plan).toMatchObject({
+        path: other,
+        status: 'changed',
+        text: '# Plan B\n',
+      });
+      // The hash recorded for that turn is plan B's, so the agent may write B without a reread.
+      await fake().tools.call('write_file', { path: other, text: '# Plan B\n\n- Agreed\n' });
+      fake().finish();
+      await tick();
+    } finally {
+      closeSync(lock);
+    }
   });
 
-  it('records no plan hash for a turn stopped while it waited for the lock', async () => {
+  it('sends plan data that matches the attachment when the provider receives the turn', async () => {
+    const { f, plan, controller, room } = await planRoom('# Plan A\n');
+    const other = join(f.other, 'plan b.md');
+    writeFileSync(other, '# Plan B\n');
+    const seen: [string | undefined, string | undefined][] = [];
+    Fake.observe = (input) => seen.push([input.plan?.path, room.session.plan?.path]);
+    // Commands queued right behind a send: the turn goes out with the plan attached then.
+    room.send('Discuss');
+    await controller.submit('/plan off');
+    await tick();
+    f.fakes.codex!.finish();
+    await tick();
+    await controller.submit(`/plan resume ${plan}`);
+    room.send('Again');
+    await controller.submit('/plan off');
+    await controller.submit(`/plan resume ${other}`);
+    await tick();
+    f.fakes.codex!.finish();
+    await tick();
+    room.send('Third');
+    await tick();
+    expect(seen).toHaveLength(3);
+    for (const [sent, attached] of seen) expect(sent).toBe(attached);
+    expect(seen[2]).toEqual([other, other]);
+  });
+
+  it('holds a deferred turn through stop, then delivers the current plan on continue', async () => {
     const { f, plan, room, turn } = await planRoom('# Plan\n');
     await turn();
     writeFileSync(plan, '# Plan v2\n');
@@ -902,11 +929,15 @@ describe('plan data in turns', () => {
     const stopping = room.stop('codex');
     closeSync(lock);
     await stopping;
-    expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('interrupted');
+    expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('queued');
+    expect(f.fakes.codex!.inputs).toHaveLength(1);
     await room.continue('codex');
-    // The same provider session resumes, so only an unrecorded hash can bring v2 back.
+    // The same provider session resumes and still receives v2, which it never saw.
     expect(f.fakes.codex!.starts).toEqual(['native-session']);
-    expect((await turn('Next')).plan).toMatchObject({ status: 'changed', text: '# Plan v2\n' });
+    await expect.poll(() => f.fakes.codex!.inputs.length).toBe(1);
+    const input = f.fakes.codex!.inputs[0]!;
+    expect(input.messages.map((message) => message.text)).toEqual(['Discuss v2']);
+    expect(input.plan).toMatchObject({ status: 'changed', text: '# Plan v2\n' });
   });
 
   it('fails a turn whose plan state cannot be read instead of inventing plan data', async () => {
@@ -921,7 +952,7 @@ describe('plan data in turns', () => {
     );
   });
 
-  it('keeps a turn waiting for the plan lock past the tool deadline without inventing data', async () => {
+  it('keeps plan-mode work queued past the tool deadline while the lock is held, inventing nothing', async () => {
     const { f, plan, room } = await planRoom('# Plan\n');
     const lock = tryPlanLock(plan)!;
     vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
@@ -929,7 +960,7 @@ describe('plan data in turns', () => {
       room.send('Discuss');
       await vi.advanceTimersByTimeAsync(30000);
       expect(f.fakes.codex!.inputs).toEqual([]);
-      expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('sent');
+      expect(room.session.messages.at(-1)!.deliveries.codex!.status).toBe('queued');
       closeSync(lock);
       await vi.advanceTimersByTimeAsync(100);
     } finally {
@@ -937,6 +968,33 @@ describe('plan data in turns', () => {
     }
     await expect.poll(() => f.fakes.codex!.inputs.length).toBe(1);
     expect(f.fakes.codex!.inputs[0]!.plan).toMatchObject({ status: 'changed', text: '# Plan\n' });
+  });
+
+  it("clears a failed turn's new plan hash unless a tool recorded one since", async () => {
+    const { f, plan, room, tools } = await planRoom('# Plan\n');
+    const fake = () => f.fakes.codex!;
+    room.send('Discuss');
+    await tick();
+    expect(fake().inputs.at(-1)!.plan!.text).toBe('# Plan\n');
+    // A plan read during the turn records identical bytes; the interruption keeps that record.
+    await tools.call('read_file', { path: plan });
+    await room.stop('codex');
+    await room.continue('codex');
+    room.send('Next');
+    await tick();
+    expect(fake().inputs.at(-1)!.plan!.status).toBe('unchanged');
+    fake().finish();
+    await tick();
+    // With no tool record since, an interrupted turn's new text is sent again.
+    writeFileSync(plan, '# Plan v2\n');
+    room.send('v2');
+    await tick();
+    expect(fake().inputs.at(-1)!.plan!.text).toBe('# Plan v2\n');
+    await room.stop('codex');
+    await room.continue('codex');
+    room.send('After');
+    await tick();
+    expect(fake().inputs.at(-1)!.plan).toMatchObject({ status: 'changed', text: '# Plan v2\n' });
   });
 
   it('hands the plan lock to the file worker, which keeps it after the caller lets go', async () => {

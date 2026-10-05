@@ -46,7 +46,6 @@ import {
   planTurn,
   resolvePlanArgument,
   tryPlanLock,
-  withPlanLock,
 } from './plan.js';
 import type { Persistence } from './store.js';
 import { attachmentLimits, validateAttachmentSet, type AttachmentAccess } from './attachments.js';
@@ -88,6 +87,8 @@ export interface DraftUpdate {
   version?: number;
 }
 const now = () => new Date().toISOString();
+/** Plan data prepared for one turn, and the hash to record as the provider receives it. */
+type PreparedPlan = { plan: PlanTurn; record?: string };
 const uuidIdentity = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
 export function newSession(config: RoomConfig): Session {
   return {
@@ -129,6 +130,7 @@ export class Room extends EventEmitter {
   private persistTimer?: NodeJS.Timeout;
   /** Host-owned plan-mode state that tool services read at call time. */
   private plans = new PlanState();
+  private planRetry?: NodeJS.Timeout;
   constructor(
     public config: RoomConfig,
     private persistence: Persistence,
@@ -314,36 +316,27 @@ export class Room extends EventEmitter {
     }
   }
   /**
-   * The plan data for one agent's turn, read under the plan's lock so no turn sees a write in
-   * progress, with the hash to record once the provider receives the turn. It waits while
-   * another holder has the lock, until the turn is cancelled, and follows the attachment as it
-   * stands once the lock is held: none after `/plan off`, the new plan after a switch.
+   * The plan data for one agent's next turn, read under the plan's lock so no turn sees a write
+   * in progress, with the hash to record as the provider receives the turn. `busy` while another
+   * holder has the lock: the scheduler keeps that agent's work queued and tries again shortly.
    */
-  private async planTurn(
-    id: string,
-    signal: AbortSignal,
-  ): Promise<{ plan: PlanTurn; record?: string } | undefined> {
-    for (;;) {
-      const path = this.session.plan?.path;
-      if (!path) return undefined;
-      const read = () => {
-        if (signal.aborted) throw new Error('Interrupted');
-        if (this.session.plan?.path !== path) return undefined;
-        return planTurn(path, this.plans.recorded(id));
-      };
-      // Read and release at once when the lock is free, so other agents' turns never wait on it.
-      const lock = tryPlanLock(path);
-      let prepared;
-      if (lock === undefined)
-        prepared = await withPlanLock(path, async () => read(), signal, Infinity);
-      else
-        try {
-          prepared = read();
-        } finally {
-          closeSync(lock);
-        }
-      if (prepared) return prepared;
+  private preparePlan(id: string): PreparedPlan | 'busy' | undefined {
+    const path = this.session.plan?.path;
+    if (!path) return undefined;
+    const lock = tryPlanLock(path);
+    if (lock === undefined) return 'busy';
+    try {
+      return planTurn(path, this.plans.recorded(id));
+    } finally {
+      closeSync(lock);
     }
+  }
+  /** One timer at a time: the lock, never the file, is checked again while it is busy. */
+  private retryPlanLock(): void {
+    this.planRetry ??= setTimeout(() => {
+      this.planRetry = undefined;
+      this.schedule();
+    }, 20);
   }
   private state(id: string): AgentState {
     const state = this.session.agents[id];
@@ -861,7 +854,17 @@ export class Room extends EventEmitter {
           attachmentBytes += nextAttachmentBytes;
           attachmentCount += nextAttachmentCount;
         }
-        if (batch.length) this.dispatch(id, batch);
+        if (!batch.length) continue;
+        let prepared: ReturnType<typeof this.preparePlan> | { error: unknown };
+        try {
+          prepared = this.preparePlan(id);
+        } catch (error) {
+          // Unreadable plan state fails this turn through the usual failure path.
+          prepared = { error };
+        }
+        // A plan write in progress holds this agent's work in the queue, not in a dispatched turn.
+        if (prepared === 'busy') this.retryPlanLock();
+        else this.dispatch(id, batch, prepared);
       }
     });
   }
@@ -938,7 +941,11 @@ export class Room extends EventEmitter {
     }
     return { queued, capped, unresolved };
   }
-  private dispatch(id: string, batch: Message[]): void {
+  private dispatch(
+    id: string,
+    batch: Message[],
+    prepared?: PreparedPlan | { error: unknown },
+  ): void {
     const state = this.state(id);
     const adapter = this.adapters.get(id)!;
     const chargedRoots = [
@@ -999,14 +1006,24 @@ export class Room extends EventEmitter {
       (m) => m.sequence > state.contextThrough && !attempt.messageIds.includes(m.id),
     );
     const editsBefore = this.planEdits(id);
-    const planPath = this.session.plan?.path;
-    let shownPlan = false;
+    const plan = prepared && 'plan' in prepared ? prepared : undefined;
     const turn = {
       messages: structuredClone(batch),
       context: structuredClone(context),
       history: structuredClone(this.session.messages),
       participants: this.enabledNames(),
       humanName: this.config.humanName ?? 'You',
+      ...(plan ? { plan: plan.plan } : {}),
+    };
+    // Recorded only as the provider receives the turn. A failed turn that brought new plan text
+    // clears it again, unless a tool recorded since (seq tells identical bytes apart).
+    let shown: { hash?: string; seq: number } | undefined;
+    const run = () => {
+      if (plan?.record !== undefined) {
+        this.plans.record(id, plan.record);
+        if (plan.plan.status === 'changed') shown = this.plans.snapshot(id);
+      }
+      return adapter.run(turn, onEvent, controller.signal);
     };
     // schedule() already failed unsupported images for this recipient, so an
     // image reaching dispatch with a closed gate is an invariant failure. It must
@@ -1018,21 +1035,9 @@ export class Room extends EventEmitter {
               `Invariant violation: initial images for @${id} reached dispatch without passing the room preflight`,
             ),
           )
-        : planPath
-          ? // Plan data waits for the plan's lock; without plan mode the turn starts at once.
-            this.planTurn(id, controller.signal).then((prepared) => {
-              if (controller.signal.aborted || state.active?.id !== attempt.id)
-                throw new Error('Interrupted');
-              // Record the hash only as the provider receives the turn that carries the plan.
-              if (prepared?.record !== undefined) this.plans.record(id, prepared.record);
-              shownPlan = prepared?.plan.status === 'changed' && prepared.record !== undefined;
-              return adapter.run(
-                { ...turn, ...(prepared ? { plan: prepared.plan } : {}) },
-                onEvent,
-                controller.signal,
-              );
-            })
-          : adapter.run(turn, onEvent, controller.signal);
+        : prepared && 'error' in prepared
+          ? Promise.reject(prepared.error)
+          : run();
     const promise = invocation
       .then((result) => {
         if (controller.signal.aborted || state.active?.id !== attempt.id)
@@ -1073,10 +1078,11 @@ export class Room extends EventEmitter {
       })
       .catch((e) => {
         // A turn that did not complete may not have shown its new plan text: send it again.
-        if (shownPlan)
-          try {
+        try {
+          const current = shown && this.plans.snapshot(id);
+          if (current && current.seq === shown!.seq && current.hash === shown!.hash)
             this.plans.record(id, undefined);
-          } catch {}
+        } catch {}
         for (const message of batch)
           if (['sent', 'received'].includes(message.deliveries[id]?.status ?? ''))
             message.deliveries[id]!.status = controller.signal.aborted ? 'interrupted' : 'failed';
@@ -1785,6 +1791,7 @@ export class Room extends EventEmitter {
     await Promise.all([...this.maintenance.values()].map((operation) => operation.promise));
     await Promise.all([...this.runs.values()].map((r) => r.promise));
     clearTimeout(this.persistTimer);
+    clearTimeout(this.planRetry);
     this.changed();
     this.plans.close();
   }
