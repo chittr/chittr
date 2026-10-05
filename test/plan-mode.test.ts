@@ -28,9 +28,11 @@ import {
   planFileName,
   planFolder,
   planHash,
+  planStateRoot,
   planTextLimit,
   readPlanMode,
 } from '../src/plan.js';
+import { sandboxProfile } from '../src/tools.js';
 import type {
   AdapterEvent,
   AgentAdapter,
@@ -53,6 +55,7 @@ const namePattern = /^\d{4}-\d{2}-\d{2}-\d{4}-[a-z]+-[a-z]+-[a-z]+\.md$/;
 class Fake implements AgentAdapter {
   inputs: TurnInput[] = [];
   starts: (string | undefined)[] = [];
+  emit?: (event: AdapterEvent) => void;
   /** The provider session the next started adapter reports instead of resuming. */
   static nextSession?: string;
   nativeCompaction = true;
@@ -75,8 +78,9 @@ class Fake implements AgentAdapter {
     Fake.nextSession = undefined;
     return { sessionId, restored: false };
   }
-  run(input: TurnInput, _event: (event: AdapterEvent) => void, signal: AbortSignal) {
+  run(input: TurnInput, event: (event: AdapterEvent) => void, signal: AbortSignal) {
     this.inputs.push(input);
+    this.emit = event;
     return new Promise<TurnResult>((resolve, reject) => {
       this.pending = { resolve, reject };
       signal.addEventListener('abort', () => reject(new Error('Interrupted')), { once: true });
@@ -110,12 +114,15 @@ class Fake implements AgentAdapter {
 
 const roots: string[] = [];
 const cleanups: (() => Promise<void> | void)[] = [];
-let savedHome: string | undefined;
+let savedHome: string | undefined, savedTmpdir: string | undefined;
 beforeEach(() => {
   savedHome = process.env.HOME;
+  savedTmpdir = process.env.TMPDIR;
 });
 afterEach(async () => {
   process.env.HOME = savedHome;
+  if (savedTmpdir === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = savedTmpdir;
   Fake.nextSession = undefined;
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -370,6 +377,87 @@ describe('plan commands', () => {
     expect(controller.room.session.plan).toBeUndefined();
   });
 
+  it('refuses to create a plan inside a skill bundle, directly or through a symlinked folder', async () => {
+    const f = fixture();
+    const skill = join(f.root, 'skills', 'review');
+    mkdirSync(join(skill, 'plans'), { recursive: true });
+    f.config.agents.codex!.skills = {
+      bundles: [
+        {
+          name: 'review',
+          description: 'Review',
+          explicitOnly: false,
+          digest: 'x',
+          path: skill,
+          root: skill,
+        },
+      ],
+      warnings: [],
+    };
+    f.config.plans = { location: skill, folder: planFolder(skill, f.workspace, f.home) };
+    const controller = f.controller();
+    await controller.room.start();
+    await expect(controller.submit('/plan')).rejects.toThrow(
+      'plans.location points inside a skill bundle',
+    );
+    const link = join(f.root, 'linked plans');
+    symlinkSync(join(skill, 'plans'), link);
+    f.config.plans = { location: link, folder: link };
+    await expect(controller.submit('/plan')).rejects.toThrow(
+      'A plan cannot be inside a skill bundle',
+    );
+    expect(readdirSync(join(skill, 'plans'))).toEqual([]);
+    expect(readdirSync(skill)).toEqual(['plans']);
+    expect(controller.room.session.plan).toBeUndefined();
+  });
+
+  it('refuses plan access from every participant once any discovered bundle contains the plan', async () => {
+    const f = fixture(
+      { edits: false, commands: false, network: false },
+      { agents: ['codex', 'claude'] },
+    );
+    const bundle = join(f.root, 'claude skills');
+    mkdirSync(bundle);
+    const plan = join(bundle, 'plan.md');
+    writeFileSync(plan, '# Plan\n');
+    const controller = f.controller();
+    const room = controller.room;
+    await room.start();
+    await controller.submit(`/plan resume ${plan}`);
+    const codex = f.fakes.codex!.tools;
+    await codex.call('read_file', { path: plan });
+    await room.reload({
+      ...f.config,
+      agents: {
+        ...f.config.agents,
+        claude: {
+          ...f.config.agents.claude!,
+          skills: {
+            bundles: [
+              {
+                name: 'ours',
+                description: 'Ours',
+                explicitOnly: false,
+                digest: 'x',
+                path: bundle,
+                root: bundle,
+              },
+            ],
+            warnings: [],
+          },
+        },
+      },
+    });
+    expect(f.fakes.codex!.tools).toBe(codex);
+    await expect(codex.call('write_file', { path: plan, text: '# Changed\n' })).rejects.toThrow(
+      'A plan cannot be inside a skill bundle',
+    );
+    await expect(codex.call('read_file', { path: plan })).rejects.toThrow(
+      'A plan cannot be inside a skill bundle',
+    );
+    expect(readFileSync(plan, 'utf8')).toBe('# Plan\n');
+  });
+
   it('shows the effective plans.location and its source in /config', async () => {
     const f = fixture();
     const controller = f.controller();
@@ -521,7 +609,7 @@ describe('plan-mode permissions', () => {
     await controller.submit(`/plan resume ${plan}`);
     const { directory } = f.fakes.codex!.agent.planState!;
     const tools = f.fakes.codex!.tools;
-    expect(readPlanMode(directory)).toBe(plan);
+    expect(readPlanMode(directory)?.path).toBe(plan);
     expect(inside(f.workspace, directory)).toBe(false);
     expect(inside(tools.scratch, directory)).toBe(false);
     expect(inside(directory, tools.scratch)).toBe(false);
@@ -529,9 +617,39 @@ describe('plan-mode permissions', () => {
       command: `echo '{"path":null}' > "${join(directory, 'mode.json')}"`,
     })) as { exitCode: number };
     expect(attempt.exitCode).not.toBe(0);
-    expect(readPlanMode(directory)).toBe(plan);
+    expect(readPlanMode(directory)?.path).toBe(plan);
     await controller.close();
     expect(existsSync(directory)).toBe(false);
+  });
+
+  it('keeps plan state in its private root when TMPDIR points into the workspace', async () => {
+    const f = fixture({ edits: true, commands: true, network: false });
+    const local = join(f.workspace, 'tmp');
+    mkdirSync(local);
+    process.env.TMPDIR = local;
+    const plan = join(f.other, 'plan.md');
+    writeFileSync(plan, '# Plan\n');
+    const controller = f.controller();
+    await controller.room.start();
+    await controller.submit('/plan off');
+    const tools = f.fakes.codex!.tools;
+    const { directory } = f.fakes.codex!.agent.planState!;
+    expect(inside(tools.scratch, local)).toBe(false);
+    expect(inside(local, tools.scratch)).toBe(true);
+    expect(inside(planStateRoot, directory)).toBe(true);
+    expect(inside(f.workspace, directory)).toBe(false);
+    expect(sandboxProfile(f.workspace, f.config.permissions, tools.scratch)).toContain(
+      `(subpath "${planStateRoot}"))`,
+    );
+    // Plan mode off and edits on: a command still cannot attach a plan by rewriting the state.
+    const attempt = (await tools.call('run_command', {
+      command: `printf '{"path":"${plan}","skills":[]}' > "${join(directory, 'mode.json')}"`,
+    })) as { exitCode: number };
+    expect(attempt.exitCode).not.toBe(0);
+    expect(readPlanMode(directory)).toBeUndefined();
+    await expect(tools.call('read_file', { path: plan })).rejects.toThrow(
+      'limited to the launch directory',
+    );
   });
 });
 
@@ -606,6 +724,41 @@ describe('plan data in turns', () => {
     expect(readFileSync(plan, 'utf8')).toBe('# Short\n');
     writeFileSync(plan, 'x'.repeat(planTextLimit));
     expect((await turn()).plan!.text).toHaveLength(planTextLimit);
+  });
+
+  it('lets only one of two concurrent agent writes replace the version both saw', async () => {
+    const { f, plan, turn } = await planRoom('# Plan\n', ['codex', 'claude']);
+    await turn();
+    const texts = ['# Codex\n', '# Claude\n'];
+    const results = await Promise.allSettled([
+      f.fakes.codex!.tools.call('write_file', { path: plan, text: texts[0]! }),
+      f.fakes.claude!.tools.call('write_file', { path: plan, text: texts[1]! }),
+    ]);
+    const written = results.findIndex((result) => result.status === 'fulfilled');
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const refused = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    expect(refused.reason.message).toContain('Reread it with read_file');
+    expect(readFileSync(plan, 'utf8')).toBe(texts[written]);
+  });
+
+  it('includes the plan again after the provider compacts during a turn', async () => {
+    const { f, room, turn } = await planRoom('# Plan\n');
+    await turn();
+    room.send('Discuss more');
+    await tick();
+    f.fakes.codex!.emit!({
+      type: 'context',
+      usage: { usedTokens: 10, updatedAt: new Date().toISOString() },
+    });
+    f.fakes.codex!.finish();
+    await tick();
+    expect((await turn()).plan!.status).toBe('unchanged');
+    room.send('Discuss again');
+    await tick();
+    f.fakes.codex!.emit!({ type: 'context' });
+    f.fakes.codex!.finish();
+    await tick();
+    expect((await turn()).plan).toMatchObject({ status: 'changed', text: '# Plan\n' });
   });
 
   it('refuses a stale plan write and accepts it after a reread in the same turn', async () => {

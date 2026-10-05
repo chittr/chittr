@@ -19,10 +19,12 @@ import type { Permissions, Message, CommandMode, PlanStateLocation } from './typ
 import {
   checkedPlanPath,
   planHash,
+  planStateRoot,
   readAgentPlan,
   readPlan,
   readPlanMode,
   recordAgentPlan,
+  withPlanLock,
 } from './plan.js';
 import { runProcess } from './process.js';
 import type { SkillAccess } from './skill-access.js';
@@ -66,6 +68,8 @@ export const toolInputs = {
     .strict(),
 };
 export type ToolName = keyof typeof toolInputs;
+type ToolInput = z.infer<(typeof toolInputs)[ToolName]>;
+type PlanMode = ReturnType<typeof readPlanMode>;
 export const toolDescriptions: Record<ToolName, string> = {
   read_attachment:
     'Read the pixels of an image by its attachment_id from public room history. Discover IDs in message attachments using read_conversation exact lookup or offset/limit pagination. No paths or URLs. Unverified provider bridges return unavailable.',
@@ -147,7 +151,7 @@ export function sandboxProfile(
 (allow file-write* (literal "/dev/null") (subpath ${quote(scratch)}) ${permissions.edits ? `(subpath ${quote(workspace)})` : ''}${planFile})
 ${skills.length ? `(deny file-write* ${[...new Set(skills.flatMap((s) => [s.path, s.root]))].map((p) => `(subpath ${quote(p)})`).join(' ')})` : ''}
 ${permissions.network && !worker ? '(allow network-outbound network-inbound)' : '(deny network*)'}
-(deny file-read* file-write* (subpath ${quote(commandBrokerRoot)}))
+(deny file-read* file-write* (subpath ${quote(commandBrokerRoot)}) (subpath ${quote(planStateRoot)}))
 (deny network-outbound (remote unix-socket (subpath ${quote(commandBrokerRoot)})))`;
 }
 export type CommandRuntime =
@@ -311,7 +315,8 @@ export class ToolService {
     const name = tool as ToolName;
     const input = toolInputs[name].parse(args);
     // Plan mode is read at call time, so /plan and /plan off apply from the next call.
-    const plan = this.planState ? readPlanMode(this.planState.directory) : undefined;
+    const mode = this.planState ? readPlanMode(this.planState.directory) : undefined;
+    const plan = mode?.path;
     const requested =
       'path' in input && typeof input.path === 'string'
         ? input.path.startsWith('~/')
@@ -340,17 +345,42 @@ export class ToolService {
       throw new Error(
         `Missing permission: permissions.${required}=true. Explain this to the human; a YAML config change and idle /reload are required. No temporary grant is available.`,
       );
-    let planRead: string | undefined;
-    if (planFile) {
-      checkedPlanPath(planFile, this.skillAccess);
-      const bytes = readPlan(planFile);
-      if (!bytes) throw new Error(`The plan file is missing: ${planFile}`);
-      planRead = planHash(bytes);
-      if (name === 'write_file' && planRead !== readAgentPlan(this.planState!).hash)
-        throw new Error(
-          'The plan changed since you last received or read it. Reread it with read_file, then retry the write.',
-        );
-    }
+    if (!planFile) return this.run(name, input, mode, undefined, signal);
+    // The lock spans the guard, the worker and the recorded hash, across host and MCP processes.
+    const location = this.planState!;
+    return withPlanLock(
+      location.directory,
+      async () => {
+        // Bundles discovered for any participant, not only this one, exclude the plan.
+        checkedPlanPath(planFile, [...this.skillAccess, ...mode!.skills]);
+        const bytes = readPlan(planFile);
+        if (!bytes) throw new Error(`The plan file is missing: ${planFile}`);
+        const current = planHash(bytes);
+        if (name === 'write_file' && current !== readAgentPlan(location).hash)
+          throw new Error(
+            'The plan changed since you last received or read it. Reread it with read_file, then retry the write.',
+          );
+        const result = await this.run(name, input, mode, planFile, signal);
+        if (name === 'write_file')
+          recordAgentPlan(
+            location,
+            planHash((input as z.infer<typeof toolInputs.write_file>).text),
+            true,
+          );
+        else recordAgentPlan(location, current);
+        return result;
+      },
+      signal,
+    );
+  }
+  private async run(
+    name: ToolName,
+    input: ToolInput,
+    mode: PlanMode,
+    planFile: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const plan = mode?.path;
     if (signal?.aborted) throw new Error('Interrupted');
     const controller = new AbortController();
     this.controllers.add(controller);
@@ -504,7 +534,7 @@ export class ToolService {
                     ? { ...input, path: join(homedir(), input.path.slice(2)) }
                     : input,
                 skillAccess: this.skillAccess,
-                ...(plan === undefined ? {} : { plan }),
+                ...(mode === undefined ? {} : { plan: mode.path, planSkills: mode.skills }),
               })
             : undefined,
         },
@@ -513,13 +543,6 @@ export class ToolService {
       if (result.code !== 0) throw new Error(result.stderr.trim() || 'Sandboxed file tool failed');
       const parsed = JSON.parse(result.stdout);
       if (parsed.error) throw new Error(parsed.error);
-      if (planFile && name === 'read_file') recordAgentPlan(this.planState!, planRead);
-      if (planFile && name === 'write_file')
-        recordAgentPlan(
-          this.planState!,
-          planHash((input as z.infer<typeof toolInputs.write_file>).text),
-          true,
-        );
       return parsed.result;
     } finally {
       signal?.removeEventListener('abort', abort);

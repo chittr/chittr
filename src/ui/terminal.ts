@@ -122,10 +122,14 @@ export function planLine(
 ): string | undefined {
   if (!plan) return undefined;
   const label = plan.missing ? 'plan mode · file missing · ' : 'plan mode · ';
+  // A file name can hold control sequences: show it flattened, keep the real path in the link.
+  const shown = cleanText(plan.path)
+    .replace(/[\n\u2028\u2029]/g, ' ')
+    .replace(/[\u0080-\u009f]/g, '');
   // Keep the file name visible: a long path loses its leading directories first.
   const available = Math.max(1, width - stringWidth(label));
-  const characters = [...plan.path];
-  let path = plan.path;
+  const characters = [...shown];
+  let path = shown;
   while (characters.length > 1 && stringWidth(path) > available) {
     characters.shift();
     path = '…' + characters.join('');

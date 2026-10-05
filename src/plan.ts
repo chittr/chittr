@@ -14,7 +14,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { isSkillPath } from './skill-access.js';
 import type { PlanStateLocation, PlanTurn, SkillAccess } from './types.js';
@@ -126,6 +125,12 @@ export function checkedPlanPath(path: string, skills: SkillAccess[] = []): strin
     throw new Error(`The plan path no longer resolves to itself: ${path}`);
   return path;
 }
+/** Refuse a plan folder inside a skill bundle before `/plan` creates anything there. */
+export function checkedPlanFolder(folder: string, skills: SkillAccess[] = []): string {
+  if (isSkillPath(join(folder, 'plan.md'), skills))
+    throw new Error(`plans.location points inside a skill bundle: ${folder}`);
+  return folder;
+}
 /** Resolve and check a path named by `/plan resume`. */
 export function attachablePlan(path: string, skills: SkillAccess[] = []): string {
   let stat;
@@ -214,6 +219,9 @@ export function planTurn(
   };
 }
 
+// Every file and command sandbox denies this directory, including rooms whose workspace
+// contains /private/tmp, and it never follows TMPDIR into a workspace.
+export const planStateRoot = `/private/tmp/chittr-plan-state-${process.getuid?.() ?? 'user'}`;
 const agentIdentity = /^[a-z][a-z0-9_-]{0,31}$/;
 function writeState(path: string, value: unknown): void {
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -224,12 +232,70 @@ function agentFile({ directory, agent }: PlanStateLocation): string {
   if (!agentIdentity.test(agent)) throw new Error('Invalid plan state agent');
   return join(directory, 'agents', `${agent}.json`);
 }
-/** The attached plan path, or undefined when plan mode is off. Unreadable state fails closed. */
-export function readPlanMode(directory: string): string | undefined {
+/**
+ * The attached plan path and every skill bundle discovered in the room, or undefined when
+ * plan mode is off. Unreadable state fails closed.
+ */
+export function readPlanMode(
+  directory: string,
+): { path: string; skills: SkillAccess[] } | undefined {
   const value = JSON.parse(readFileSync(join(directory, 'mode.json'), 'utf8'));
   if (value?.path === null) return undefined;
-  if (typeof value?.path !== 'string') throw new Error('Plan mode state is invalid');
-  return value.path;
+  if (
+    typeof value?.path !== 'string' ||
+    !Array.isArray(value.skills) ||
+    value.skills.some(
+      (skill: SkillAccess) => typeof skill?.path !== 'string' || typeof skill?.root !== 'string',
+    )
+  )
+    throw new Error('Plan mode state is invalid');
+  return {
+    path: value.path,
+    skills: value.skills.map(({ path, root }: SkillAccess) => ({ path, root })),
+  };
+}
+/**
+ * Hold the room's plan lock across processes while `action` checks and touches the plan,
+ * so two agents cannot both pass the hash guard against the same version.
+ */
+export async function withPlanLock<T>(
+  directory: string,
+  action: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const lock = join(directory, 'plan.lock');
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    signal?.throwIfAborted();
+    try {
+      writeFileSync(lock, String(process.pid), { flag: 'wx', mode: 0o600 });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    let holder = '';
+    try {
+      holder = readFileSync(lock, 'utf8');
+      if (Number(holder)) process.kill(Number(holder), 0);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') continue;
+      // A holder that exited without releasing leaves a stale lock.
+      if (code === 'ESRCH') {
+        try {
+          if (readFileSync(lock, 'utf8') === holder) rmSync(lock, { force: true });
+        } catch {}
+        continue;
+      }
+    }
+    if (Date.now() > deadline) throw new Error('Another plan read or write is in progress; retry');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  try {
+    return await action();
+  } finally {
+    rmSync(lock, { force: true });
+  }
 }
 /** One agent's recorded plan hash and its count of successful plan writes. */
 export function readAgentPlan(location: PlanStateLocation): { hash?: string; edits: number } {
@@ -257,17 +323,32 @@ export function recordAgentPlan(
 
 /** Host-owned plan-mode state: the attached path and one hash file per agent. */
 export class PlanState {
-  readonly directory = realpathSync(mkdtempSync(join(tmpdir(), 'chittr-plan-')));
+  readonly directory: string;
   constructor() {
+    mkdirSync(planStateRoot, { recursive: true, mode: 0o700 });
+    const root = lstatSync(planStateRoot);
+    if (!root.isDirectory() || root.uid !== process.getuid?.() || (root.mode & 0o077) !== 0)
+      throw new Error('Plan state directory must be a private directory owned by the current user');
+    this.directory = realpathSync(mkdtempSync(join(planStateRoot, 'p-')));
     mkdirSync(join(this.directory, 'agents'), { mode: 0o700 });
     writeState(join(this.directory, 'mode.json'), { path: null });
   }
   location(agent: string): PlanStateLocation {
     return { directory: this.directory, agent };
   }
-  /** Turn plan mode on with `path`, or off. Every agent's recorded hash is cleared. */
-  set(path: string | undefined, hashes: Record<string, string> = {}): void {
-    writeState(join(this.directory, 'mode.json'), { path: path ?? null });
+  /**
+   * Turn plan mode on with `path`, or off. Agents keep only the given hashes. `skills` lists
+   * every bundle discovered in the room, so no participant's tools admit a plan inside one.
+   */
+  set(
+    path: string | undefined,
+    hashes: Record<string, string> = {},
+    skills: SkillAccess[] = [],
+  ): void {
+    writeState(join(this.directory, 'mode.json'), {
+      path: path ?? null,
+      ...(path ? { skills: skills.map(({ path, root }) => ({ path, root })) } : {}),
+    });
     const agents = new Set([...this.agents(), ...Object.keys(hashes)]);
     for (const agent of agents) this.record(agent, path ? hashes[agent] : undefined);
   }

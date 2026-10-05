@@ -20,6 +20,7 @@ import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
+import { rmSync } from 'node:fs';
 import type {
   RoomConfig,
   Session,
@@ -32,9 +33,12 @@ import type {
   AttachmentMetadata,
   AttachmentSendOperation,
   PlanTurn,
+  SkillAccess,
 } from './types.js';
 import {
   PlanState,
+  checkedPlanFolder,
+  checkedPlanPath,
   createPlanFile,
   listPlans,
   planFileMissing,
@@ -134,7 +138,8 @@ export class Room extends EventEmitter {
     super();
     this.session = session ? structuredClone(session) : newSession(config);
     freezeLegacyQuestions(this.session.messages);
-    if (this.session.plan) this.plans.set(this.session.plan.path, this.session.plan.hashes);
+    if (this.session.plan)
+      this.plans.set(this.session.plan.path, this.session.plan.hashes, this.skillBundles());
     if (session) {
       const savedMode = session.commandMode ?? (session.permissions.commands ? 'sandboxed' : 'off');
       const policyChanged =
@@ -235,10 +240,26 @@ export class Room extends EventEmitter {
     const path = this.session.plan?.path;
     if (path) throw new Error(`Plan mode is already on with ${path}. Run /plan off first.`);
   }
+  /** Every skill bundle discovered for any participant; no plan may live inside one. */
+  private skillBundles(): SkillAccess[] {
+    return Object.values(this.config.agents).flatMap((agent) =>
+      (agent.skills?.bundles ?? []).map(({ path, root }) => ({ path, root })),
+    );
+  }
   /** `/plan`: create an empty plan file, attach it and turn plan mode on. */
   createPlan(): string {
     this.assertPlanOff();
-    const path = createPlanFile(this.planFolder());
+    const folder = this.planFolder();
+    const skills = this.skillBundles();
+    // Check the folder by name first, then the created file's resolved path.
+    checkedPlanFolder(folder, skills);
+    const path = createPlanFile(folder);
+    try {
+      checkedPlanPath(path, skills);
+    } catch (error) {
+      rmSync(path, { force: true });
+      throw error;
+    }
     this.attachPlan(path, `Created ${path}. Plan mode is on; run /plan off to leave it.`);
     return path;
   }
@@ -259,7 +280,7 @@ export class Room extends EventEmitter {
       folder,
       workspace: this.config.workspace,
       home: homedir(),
-      skills: Object.values(this.config.agents).flatMap((agent) => agent.skills?.bundles ?? []),
+      skills: this.skillBundles(),
     });
     this.attachPlan(path, `Plan mode is on with ${path}. Run /plan off to leave it.`);
     return path;
@@ -278,7 +299,7 @@ export class Room extends EventEmitter {
   }
   private attachPlan(path: string, text: string): void {
     // Enforcement state first: tool services admit the plan from their next call.
-    this.plans.set(path);
+    this.plans.set(path, {}, this.skillBundles());
     this.session.plan = { path, hashes: {} };
     this.notice(text);
   }
@@ -949,6 +970,8 @@ export class Room extends EventEmitter {
       }
       if (event.type === 'text') state.draft = event.text;
       if (event.type === 'context') state.contextUsage = event.usage;
+      // A context event without a reading marks provider compaction: show the plan again.
+      if (event.type === 'context' && !event.usage) this.plans.record(id, undefined);
       if (event.type === 'notice') this.notice(`${id}: ${event.text}`, false);
       this.changed(event.type !== 'text');
     };
@@ -1650,6 +1673,9 @@ export class Room extends EventEmitter {
       commandMode(config) !== commandMode(this.config);
     const old = this.config;
     this.config = config;
+    // The new config can discover other skill bundles; tool services exclude those too.
+    if (this.session.plan)
+      this.plans.set(this.session.plan.path, this.plans.hashes(), this.skillBundles());
     this.interruptDisabledConsultations();
     this.session.permissions = { ...config.permissions };
     this.session.commandMode = commandMode(config);

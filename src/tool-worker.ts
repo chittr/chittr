@@ -56,14 +56,17 @@ export function fileOperation(
   args: Record<string, any>,
   skills: SkillAccess[] = [],
   plan?: string,
+  planSkills: SkillAccess[] = [],
 ): unknown {
   const readPath = (path: string) =>
     skillPath(resolve(root, path), skills) ?? checkedPath(root, path);
   const display = (path: string) => (inside(root, path) ? relative(root, path) : path);
   // In plan mode, the attached plan is the one path admitted outside these rules.
   const isPlan = (path: string) => plan !== undefined && resolve(root, path) === plan;
+  // Bundles discovered for any participant in the room exclude the plan, not only this one's.
+  const checkedPlan = () => checkedPlanPath(plan!, [...skills, ...planSkills]);
   if (tool === 'read_file') {
-    const file = isPlan(args.path) ? checkedPlanPath(plan!, skills) : readPath(args.path);
+    const file = isPlan(args.path) ? checkedPlan() : readPath(args.path);
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const stat = fstatSync(fd);
@@ -134,7 +137,7 @@ export function fileOperation(
   if (tool === 'write_file' && plan !== undefined) {
     if (!isPlan(args.path)) throw new Error('Plan mode allows writing only the attached plan');
     // The plan must already exist: no folder creation and no O_CREAT.
-    const file = checkedPlanPath(plan, skills);
+    const file = checkedPlan();
     const fd = openSync(file, constants.O_WRONLY | constants.O_TRUNC | constants.O_NOFOLLOW);
     try {
       if (!fstatSync(fd).isFile()) throw new Error('Path is not a regular file');
@@ -187,6 +190,7 @@ if (
             request.args,
             request.skillAccess ?? [],
             request.plan,
+            request.planSkills ?? [],
           ),
         }),
       );

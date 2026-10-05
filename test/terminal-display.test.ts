@@ -306,3 +306,19 @@ it.each([
 ])('detects hyperlink support from %j', (env, expected) => {
   expect(supportsHyperlinks(env)).toBe(expected);
 });
+
+it('flattens control characters in a displayed plan path and keeps the real path in the link', () => {
+  const path = '/plans/evil\x1b[2J\x1b]8;;http://x\x07name\nnext\x9b31m.md';
+  for (const links of [true, false]) {
+    const line = planLine({ path, name: 'x.md', missing: false }, 200, links)!;
+    expect(stripAnsi(line)).toBe('plan mode · /plans/evilname next31m.md');
+    // Only the header's own colour and link sequences remain.
+    const foreign = line
+      .replace(/\x1b\[38;5;215m|\x1b\[0m/g, '')
+      .replace(/\x1b\]8;;(?:file:\/\/[^\x07]*)?\x07/g, '');
+    expect(foreign).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+  }
+  expect(planLine({ path, name: 'x.md', missing: false }, 200, true)).toContain(
+    'file:///plans/evil%1B%5B2J%1B%5D8%3B%3Bhttp%3A//x%07name%0Anext%C2%9B31m.md\x07',
+  );
+});
