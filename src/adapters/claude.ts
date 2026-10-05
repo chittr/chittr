@@ -147,6 +147,8 @@ export class ClaudeAdapter implements AgentAdapter {
       { mode: commandMode(this.config), environment: this.environment },
       undefined,
       this.attachments,
+      undefined,
+      this.agent.planState,
     ));
     await tools.check();
     const help = await runProcess('claude', ['--help'], { env: providerEnv() });

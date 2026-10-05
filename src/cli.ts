@@ -79,6 +79,9 @@ Room commands:
   /pins                     View pinned messages with their full text
   /compact [@agent] [focus]  Compact one agent or all; optional focus where supported
   /checkpoint                View the latest shared context checkpoint
+  /plan                      Create a plan file, attach it and turn plan mode on
+  /plan resume [name|path]   List this workspace's plans, or attach one
+  /plan off                  Detach the plan and end plan mode
   /reconnect @agent          Reconnect with pending work paused
   /reload                   Apply config while idle
   /config                   Show effective settings and their sources
@@ -89,6 +92,11 @@ Room commands:
 
 All permissions are room-wide. Missing grants require a config change and
 idle /reload. No temporary chat approvals. The preview requires macOS.
+
+Plan mode: agents can read and write the attached plan file and nothing else,
+whatever permissions.edits says, and commands run sandboxed without account
+access. Each turn tells agents whether the plan changed. plans.location in YAML
+chooses where /plan creates files. Edit the plan with your own tools.
 
 Shared instructions: top-level YAML instructions.sources applies to all agents;
 agents can also have their own instructions.sources. Within custom guidance,

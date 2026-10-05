@@ -18,6 +18,8 @@ import {
 import type { Checkpoint, Handoff } from './types.js';
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import type {
   RoomConfig,
   Session,
@@ -29,7 +31,18 @@ import type {
   AdapterEvent,
   AttachmentMetadata,
   AttachmentSendOperation,
+  PlanTurn,
 } from './types.js';
+import {
+  PlanState,
+  createPlanFile,
+  listPlans,
+  planFileMissing,
+  planFolder,
+  planRules,
+  planTurn,
+  resolvePlanArgument,
+} from './plan.js';
 import type { Persistence } from './store.js';
 import { attachmentLimits, validateAttachmentSet, type AttachmentAccess } from './attachments.js';
 import { createAdapter } from './adapters/index.js';
@@ -109,6 +122,8 @@ export class Room extends EventEmitter {
   private stops = new Set<Promise<void>>();
   private reloading = false;
   private persistTimer?: NodeJS.Timeout;
+  /** Host-owned plan-mode state that tool services read at call time. */
+  private plans = new PlanState();
   constructor(
     public config: RoomConfig,
     private persistence: Persistence,
@@ -119,6 +134,7 @@ export class Room extends EventEmitter {
     super();
     this.session = session ? structuredClone(session) : newSession(config);
     freezeLegacyQuestions(this.session.messages);
+    if (this.session.plan) this.plans.set(this.session.plan.path, this.session.plan.hashes);
     if (session) {
       const savedMode = session.commandMode ?? (session.permissions.commands ? 'sandboxed' : 'off');
       const policyChanged =
@@ -162,6 +178,11 @@ export class Room extends EventEmitter {
         'Conversation resumed. Queued messages run as agents connect; interrupted or failed responses need /retry.',
         false,
       );
+      if (this.session.plan)
+        this.notice(
+          `This conversation is still in plan mode with ${basename(this.session.plan.path)}. Run /plan off to leave it.`,
+          false,
+        );
     }
     this.session.permissions = { ...config.permissions };
     if (session?.commandMode === 'trusted' && commandMode(config) !== 'trusted')
@@ -200,6 +221,89 @@ export class Room extends EventEmitter {
     this.session.pinnedMessageIds = [...ids];
     this.notice(`${pinned ? 'Pinned' : 'Unpinned'} #${message.id}.`);
   }
+  /** The folder `plans.location` selects for this workspace's plans. */
+  planFolder(): string {
+    return this.config.plans?.folder ?? planFolder('user', this.config.workspace, homedir());
+  }
+  /** The attached plan for display, read fresh; undefined while plan mode is off. */
+  planStatus(): { path: string; name: string; missing: boolean } | undefined {
+    const path = this.session.plan?.path;
+    return path ? { path, name: basename(path), missing: planFileMissing(path) } : undefined;
+  }
+  private assertPlanOff(): void {
+    if (this.closed || this.fatal) throw new Error(this.fatal ?? 'Room is closed');
+    const path = this.session.plan?.path;
+    if (path) throw new Error(`Plan mode is already on with ${path}. Run /plan off first.`);
+  }
+  /** `/plan`: create an empty plan file, attach it and turn plan mode on. */
+  createPlan(): string {
+    this.assertPlanOff();
+    const path = createPlanFile(this.planFolder());
+    this.attachPlan(path, `Created ${path}. Plan mode is on; run /plan off to leave it.`);
+    return path;
+  }
+  /** `/plan resume`: list this workspace's plans, or attach the one an argument names. */
+  resumePlan(argument: string): string | undefined {
+    this.assertPlanOff();
+    const folder = this.planFolder();
+    if (!argument) {
+      const plans = listPlans(folder);
+      this.notice(
+        plans.length
+          ? `Plans in ${folder}, newest first (${plans.length})\n\n${plans.join('\n')}\n\nUse /plan resume <name or path> to attach one.`
+          : `No plans in ${folder}. Use /plan to create one.`,
+      );
+      return undefined;
+    }
+    const path = resolvePlanArgument(argument, {
+      folder,
+      workspace: this.config.workspace,
+      home: homedir(),
+      skills: Object.values(this.config.agents).flatMap((agent) => agent.skills?.bundles ?? []),
+    });
+    this.attachPlan(path, `Plan mode is on with ${path}. Run /plan off to leave it.`);
+    return path;
+  }
+  /** `/plan off`: detach the plan and end plan mode. */
+  endPlan(): void {
+    if (this.closed || this.fatal) throw new Error(this.fatal ?? 'Room is closed');
+    const path = this.session.plan?.path;
+    if (!path) {
+      this.notice('Plan mode is already off.');
+      return;
+    }
+    this.plans.set(undefined);
+    delete this.session.plan;
+    this.notice(`Plan mode is off. Detached ${path}; writes follow permissions.edits again.`);
+  }
+  private attachPlan(path: string, text: string): void {
+    // Enforcement state first: tool services admit the plan from their next call.
+    this.plans.set(path);
+    this.session.plan = { path, hashes: {} };
+    this.notice(text);
+  }
+  /** Read recorded hashes back from the files tool services also write. */
+  private syncPlan(): void {
+    if (!this.session.plan) return;
+    try {
+      this.session.plan.hashes = this.plans.hashes();
+    } catch {
+      // After close the state is gone; the last read hashes stay. A stale hash only resends the plan.
+    }
+  }
+  /** The plan data for one agent's turn, recording its hash only when the turn shows the plan. */
+  private planTurn(id: string): PlanTurn | undefined {
+    const path = this.session.plan?.path;
+    if (!path) return undefined;
+    try {
+      const { plan, record } = planTurn(path, this.plans.recorded(id));
+      if (record !== undefined) this.plans.record(id, record);
+      return plan;
+    } catch {
+      // Unreadable plan state records nothing: a flag-only turn, and plan writes stay refused.
+      return { path, status: 'changed', rules: planRules };
+    }
+  }
   private state(id: string): AgentState {
     const state = this.session.agents[id];
     if (!state) throw new Error(`Unknown agent @${id}`);
@@ -214,6 +318,7 @@ export class Room extends EventEmitter {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
       try {
+        this.syncPlan();
         this.persistence.save(this.session);
       } catch (e) {
         this.fatal = `Session could not be saved: ${errorText(e)}. Work is paused.`;
@@ -283,6 +388,7 @@ export class Room extends EventEmitter {
     return {
       ...agent,
       conversationInstructions: brief,
+      planState: this.plans.location(id),
       fingerprint:
         shared || brief
           ? createHash('sha256')
@@ -330,11 +436,15 @@ export class Room extends EventEmitter {
         this.persistence.attachmentAccess?.(this.session.id),
       );
       this.adapters.set(id, adapter);
-      const result = await adapter.start(state.sessionId);
+      const requested = state.sessionId;
+      const result = await adapter.start(requested);
       if (this.closed) {
         await adapter.close();
         return;
       }
+      // A fresh provider session has not seen the plan: its next turn includes it again.
+      if (!requested || result.restored || result.sessionId !== requested)
+        this.plans.record(id, undefined);
       if (result.restored || !previous?.sessionId || result.sessionId !== previous.sessionId)
         state.contextUsage = undefined;
       if (result.restored && !changed && previous?.sessionId && this.session.messages.length) {
@@ -468,6 +578,7 @@ export class Room extends EventEmitter {
       id: options.operationId!,
       inputHash: attachmentInputHash!,
     };
+    this.syncPlan();
     const candidate = structuredClone(this.session);
     if (options.draft) {
       const versions = candidate.composerDraftVersions ?? {};
@@ -844,12 +955,15 @@ export class Room extends EventEmitter {
     const context = this.session.messages.filter(
       (m) => m.sequence > state.contextThrough && !attempt.messageIds.includes(m.id),
     );
+    const plan = this.planTurn(id);
+    const editsBefore = this.planEdits(id);
     const turn = {
       messages: structuredClone(batch),
       context: structuredClone(context),
       history: structuredClone(this.session.messages),
       participants: this.enabledNames(),
       humanName: this.config.humanName ?? 'You',
+      ...(plan ? { plan } : {}),
     };
     // schedule() already failed unsupported images for this recipient, so an
     // image reaching dispatch with a closed gate is an invariant failure. It must
@@ -915,6 +1029,7 @@ export class Room extends EventEmitter {
         }
       })
       .finally(() => {
+        if (this.planEdits(id) > editsBefore) this.notice(`${id} edited the plan.`, false);
         if (state.active?.id === attempt.id) delete state.active;
         this.refreshQuestionState(id);
         state.detail = undefined;
@@ -923,6 +1038,14 @@ export class Room extends EventEmitter {
         this.schedule();
       });
     this.runs.set(id, { controller, promise });
+  }
+  /** Successful plan writes this agent's tool services have counted. */
+  private planEdits(id: string): number {
+    try {
+      return this.plans.edits(id);
+    } catch {
+      return 0;
+    }
   }
   private validateOutcomes(outcomes: Outcome[], required: string[], author: string): void {
     const seen = new Set<string>();
@@ -1095,6 +1218,8 @@ export class Room extends EventEmitter {
         return;
       }
       record.status = 'running';
+      // Compaction may drop the plan from context: the next turn includes it again.
+      this.plans.record(id, undefined);
       const adapter = this.adapters.get(id)!;
       if (record.route === 'native') {
         record.detail = 'Native context compaction';
@@ -1316,6 +1441,7 @@ export class Room extends EventEmitter {
       );
       // Save a candidate before touching the live provider reference or cursor.
       // No await separates validation, persistence and the in-memory commit.
+      this.syncPlan();
       const candidate = structuredClone(this.session);
       if (checkpoint !== previousCheckpoint) (candidate.checkpoints ??= []).push(checkpoint);
       (candidate.handoffs ??= {})[id] = { ...handoff, consumedBySessionId: result.sessionId };
@@ -1492,6 +1618,7 @@ export class Room extends EventEmitter {
     if (update.clientId && update.version !== undefined)
       nextVersions[update.clientId] = update.version;
     if (update.attachmentIds !== undefined) {
+      this.syncPlan();
       const candidate = structuredClone(this.session);
       candidate.composerDraft = update.text;
       candidate.composerAttachments = structuredClone(attachments);
@@ -1594,5 +1721,6 @@ export class Room extends EventEmitter {
     await Promise.all([...this.runs.values()].map((r) => r.promise));
     clearTimeout(this.persistTimer);
     this.changed();
+    this.plans.close();
   }
 }

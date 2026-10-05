@@ -1189,3 +1189,49 @@ it('rejects terminal attachment commands and completion, including forged author
   expect(controller.room.session.notices.at(-1)?.text).not.toContain('/attach');
   expect((await upload()).status).toBe(201);
 });
+
+it('carries plan banner data in snapshots and opens only the attached plan', async () => {
+  const opened: string[] = [];
+  const planWeb = new WebUI(controller, {
+    assets: join(base, 'assets'),
+    openFile: async (path) => {
+      opened.push(path);
+    },
+  });
+  const url = new URL(await planWeb.mount());
+  const open = (data: unknown) =>
+    fetch(url.origin + '/api/plan/open', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${url.hash.slice(1)}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  try {
+    const sessionId = controller.room.session.id;
+    expect(planWeb.snapshot().plan).toBeUndefined();
+    expect((await open({ sessionId })).status).toBe(409);
+    const plan = join(base, 'outside plan.md');
+    writeFileSync(plan, '# Plan\n');
+    expect((await (await command(`/plan resume ${plan}`)).json()).ok).toBe(true);
+    const state = await (await post('/api/connect', {})).json();
+    expect(state.plan).toEqual({ path: plan, name: 'outside plan.md', missing: false });
+    expect(controller.room.session.messages).toEqual([]);
+    for (const refused of [{ sessionId, path: '/etc/hosts' }, { path: plan }, {}])
+      expect((await open(refused)).status).toBe(400);
+    expect((await open({ sessionId: randomUUID() })).status).toBe(409);
+    expect(opened).toEqual([]);
+    const response = await open({ sessionId });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(opened).toEqual([plan]);
+    rmSync(plan);
+    expect(planWeb.snapshot().plan).toEqual({ path: plan, name: 'outside plan.md', missing: true });
+    const missing = await open({ sessionId });
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).error).toBe(`The plan file is missing: ${plan}`);
+    expect((await (await command('/plan off')).json()).ok).toBe(true);
+    expect(planWeb.snapshot().plan).toBeUndefined();
+    expect(opened).toEqual([plan]);
+  } finally {
+    planWeb.unmount();
+  }
+});

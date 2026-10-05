@@ -290,6 +290,8 @@ export function turnPrompt(input: TurnInput): string {
       .filter((message) => input.messages.some((required) => required.replyTo.includes(message.id)))
       .map(publicMessage),
     requiredMessages: input.messages.map(publicMessage),
+    // Plan data travels only in turn input, never in instructions or the session fingerprint.
+    ...(input.plan ? { plan: input.plan } : {}),
     historyLookup:
       'Earlier public messages and image attachment IDs are available through read_conversation exact lookup or offset/limit pagination. Use read_attachment to see their pixels; metadata and summaries are not images.',
     instruction:

@@ -9,6 +9,7 @@ import { effortError, providerIds } from './providers.js';
 import { discoverSkills } from './skills.js';
 import { resolveCommandAccess } from './command-access.js';
 import { readInstructionFile } from './instructions.js';
+import { planFolder } from './plan.js';
 
 const displayName = z
   .string()
@@ -62,6 +63,10 @@ const schema = z
       .strict()
       .optional(),
     human: z.object({ name: displayName.optional() }).strict().optional(),
+    plans: z
+      .object({ location: z.string().trim().min(1).optional() })
+      .strict()
+      .optional(),
     skills: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     conversation: z
       .object({ follow_up_turns: z.number().int().min(1).max(1000).optional() })
@@ -117,6 +122,7 @@ export function loadConfig(
   const paths = configPaths(workspace, home);
   let trustedSource: string | undefined;
   let roomInstructions: { path: string; sources: z.infer<typeof source>[] } | undefined;
+  let plans: { path: string; location: string; folder: string } | undefined;
   let selected:
     { path: string; key: 'agents' | 'defaultAgents'; entries: z.infer<typeof agents> } | undefined;
   for (const path of paths) {
@@ -137,6 +143,15 @@ export function loadConfig(
       const layer = schema.parse(raw);
       if (layer.instructions !== undefined)
         roomInstructions = { path, sources: layer.instructions.sources ?? [] };
+      // Like the instructions block, a later layer's plans value replaces an earlier one.
+      if (layer.plans !== undefined) {
+        const location = layer.plans.location ?? 'user';
+        try {
+          plans = { path, location, folder: planFolder(location, workspace, home) };
+        } catch (error) {
+          throw new Error(`plans.location: ${(error as Error).message}`);
+        }
+      }
       if (layer.trustedCommands) {
         for (const entry of layer.trustedCommands.workspaces) {
           const expanded = entry.startsWith('~/') ? join(home, entry.slice(2)) : entry;
@@ -196,6 +211,10 @@ export function loadConfig(
       `${path}: ${key} is empty. Configure at least one agent${key === 'agents' && path !== paths[0] ? ', or omit agents to use your user defaults' : ''}`,
     );
   config.provenance.agents = path;
+  config.plans = plans
+    ? { location: plans.location, folder: plans.folder }
+    : { location: 'user', folder: planFolder('user', workspace, home) };
+  if (plans) config.provenance['plans.location'] = plans.path;
   if (roomInstructions) {
     config.instructions = resolveInstructions(
       roomInstructions.sources,

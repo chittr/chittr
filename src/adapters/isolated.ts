@@ -31,6 +31,8 @@ export class IsolatedRuntime {
       { mode: commandMode(config), environment },
       undefined,
       attachments,
+      undefined,
+      agent.planState,
     );
   }
   async mcp() {

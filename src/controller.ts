@@ -428,6 +428,14 @@ export class RoomController extends EventEmitter {
           );
         this.room.compactAll(rest);
       }
+    } else if (command === '/plan') {
+      // The rest of the line is the argument, so plan paths may contain spaces.
+      const rest = line.trim().slice(command.length).trim();
+      if (!rest) this.room.createPlan();
+      else if (rest === 'off') this.room.endPlan();
+      else if (/^resume(?:\s|$)/.test(rest))
+        this.room.resumePlan(rest.slice('resume'.length).trim());
+      else throw new Error('Usage: /plan | /plan resume [name or path] | /plan off');
     } else if (command === '/checkpoint') {
       noArgs();
       this.room.notice(checkpointView(this.room.session.checkpoints?.at(-1)));
@@ -510,6 +518,10 @@ export class RoomController extends EventEmitter {
       commandAccess,
       commandAccessDescription,
       skills: config.skills ?? { enabled: true },
+      plans: {
+        location: config.plans?.location ?? 'user',
+        source: config.provenance['plans.location'] ?? null,
+      },
       followUpTurns: config.followUpTurns,
       instructions: {
         room: {

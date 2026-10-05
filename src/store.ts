@@ -12,7 +12,7 @@ import {
   statSync,
   copyFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fingerprint } from './config.js';
@@ -38,6 +38,16 @@ const attempt = z.object({
   chargedRoots: strings,
   startedAt: z.string(),
 });
+/** Plan mode as saved: the resolved plan path and each agent's recorded hash. */
+export const savedPlanSchema = z
+  .object({
+    path: z.string().refine((path) => isAbsolute(path) && path.endsWith('.md')),
+    hashes: z.record(
+      z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+      z.string().regex(/^[\da-f]{64}$/),
+    ),
+  })
+  .strict();
 const savedSession = z.object({
   version: z.literal(1),
   id: z.string(),
@@ -54,6 +64,7 @@ const savedSession = z.object({
   pinnedMessageIds: strings.optional(),
   configSources: strings,
   launchBrief: launchBriefSchema.optional(),
+  plan: savedPlanSchema.optional(),
   permissions: z.object({ edits: z.boolean(), commands: z.boolean(), network: z.boolean() }),
   commandMode: z.enum(['off', 'sandboxed', 'trusted']).optional(),
   notices: z.array(z.object({ id: z.string(), text: z.string(), createdAt: z.string() })),
@@ -210,6 +221,7 @@ export class SessionStore implements Persistence {
     if (session.workspace !== this.workspace || !/^[\da-f-]{36}$/.test(session.id))
       throw new Error('Invalid session identity');
     launchBriefSchema.optional().parse(session.launchBrief);
+    savedPlanSchema.optional().parse(session.plan);
     validateQuestionHistory(session.messages);
     freezeLegacyQuestions(session.messages);
     const folder = join(this.directory, session.id);

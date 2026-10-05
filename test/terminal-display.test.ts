@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
-import { transcript } from '../src/ui/terminal.js';
+import { fileLink, planLine, supportsHyperlinks, transcript } from '../src/ui/terminal.js';
+import stringWidth from 'string-width';
+import stripAnsi from 'strip-ansi';
 import { cleanText } from '../src/ui/input.js';
 import type { AgentSnapshot, RoomSnapshot } from '../src/snapshot.js';
 import type { Message } from '../src/types.js';
@@ -268,4 +270,39 @@ it('refreshes cached message layouts on text and width changes and owns its retu
   item.text = '**' + 'x'.repeat(30) + '**';
   expect(text(view, 80)).toContain('  ' + 'x'.repeat(30));
   expect(transcript(view, 20).filter((r) => r.key.startsWith('m1:text:'))).toHaveLength(2);
+});
+
+it('shows the attached plan as an OSC 8 link where supported and plain text elsewhere', () => {
+  const path = "/Users/x/My Projects (old)/plan's #1 é.md";
+  const plan = { path, name: "plan's #1 é.md", missing: false };
+  const linked = planLine(plan, 200, true)!;
+  const plain = planLine(plan, 200, false)!;
+  expect(linked).toContain(
+    '\x1b]8;;file:///Users/x/My%20Projects%20%28old%29/plan%27s%20%231%20%C3%A9.md\x07',
+  );
+  expect(plain).not.toContain('\x1b]8');
+  expect(stripAnsi(linked)).toBe(`plan mode · ${path}`);
+  expect(stripAnsi(plain)).toBe(`plan mode · ${path}`);
+  expect(stringWidth(linked)).toBe(stringWidth(plain));
+  expect(stringWidth(fileLink(path, 'shown'))).toBe(5);
+  const narrow = planLine(plan, 30, true)!;
+  expect(stringWidth(narrow)).toBe(30);
+  expect(stripAnsi(narrow)).toBe("plan mode · …d)/plan's #1 é.md");
+  expect(narrow).toContain('file:///Users/x/My%20Projects%20%28old%29/plan%27s%20%231%20%C3%A9.md');
+  const missing = planLine({ ...plan, missing: true }, 200, true)!;
+  expect(stripAnsi(missing)).toBe(`plan mode · file missing · ${path}`);
+  expect(missing).not.toContain('\x1b]8');
+  expect(planLine(undefined, 200, true)).toBeUndefined();
+});
+
+it.each([
+  [{ TERM_PROGRAM: 'iTerm.app' }, true],
+  [{ TERM_PROGRAM: 'WezTerm' }, true],
+  [{ VTE_VERSION: '7600' }, true],
+  [{ TERM_PROGRAM: 'Apple_Terminal' }, false],
+  [{ TERM_PROGRAM: 'iTerm.app', FORCE_HYPERLINK: '0' }, false],
+  [{ FORCE_HYPERLINK: '1' }, true],
+  [{}, false],
+])('detects hyperlink support from %j', (env, expected) => {
+  expect(supportsHyperlinks(env)).toBe(expected);
 });

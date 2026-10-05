@@ -479,3 +479,31 @@ it('cancels ingestion before dispatch without accepting or resurrecting its stag
   expect(controller.room.session.composerDraft).toBe('caption');
   expect(frame()).not.toContain('Attachment error:');
 });
+
+it('shows the plan path in the header while plan mode is on', async () => {
+  const plan = join(root, 'plan file.md');
+  writeFileSync(plan, '# Plan\n');
+  process.env.FORCE_HYPERLINK = '1';
+  process.stdout.columns = 400;
+  try {
+    await controller.submit(`/plan resume ${plan}`);
+    ui.draw();
+    expect(screenLines()[2]).toBe(`plan mode · ${controller.room.session.plan!.path}`);
+    expect(frame()).toContain(
+      `\x1b]8;;file://${controller.room.session.plan!.path.replaceAll(' ', '%20')}\x07`,
+    );
+    process.env.FORCE_HYPERLINK = '0';
+    ui.draw();
+    expect(screenLines()[2]).toBe(`plan mode · ${controller.room.session.plan!.path}`);
+    expect(frame()).not.toContain('\x1b]8;;');
+    process.stdout.columns = 40;
+    ui.draw();
+    expect(screenLines()[2]).toMatch(/^plan mode · ….*\/plan file\.md$/);
+    expect(stringWidth(screenLines()[2]!)).toBe(40);
+    await controller.submit('/plan off');
+    ui.draw();
+    expect(stripAnsi(frame())).not.toContain('plan mode');
+  } finally {
+    delete process.env.FORCE_HYPERLINK;
+  }
+});

@@ -15,7 +15,15 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import type { Permissions, Message, CommandMode } from './types.js';
+import type { Permissions, Message, CommandMode, PlanStateLocation } from './types.js';
+import {
+  checkedPlanPath,
+  planHash,
+  readAgentPlan,
+  readPlan,
+  readPlanMode,
+  recordAgentPlan,
+} from './plan.js';
 import { runProcess } from './process.js';
 import type { SkillAccess } from './skill-access.js';
 import type { AttachmentAccess } from './attachments.js';
@@ -100,6 +108,7 @@ export function sandboxProfile(
   scratch: string,
   worker = false,
   skills: SkillAccess[] = [],
+  plan?: string,
 ): string {
   const nodeRoot = dirname(dirname(realpathSync(process.execPath)));
   const roots = [
@@ -124,6 +133,8 @@ export function sandboxProfile(
     scratch,
   ];
   if (worker) roots.push(dirname(builtFile('tool-worker.js')));
+  // Only a file-tool call on the attached plan admits that exact path. Commands never do.
+  const planFile = worker && plan ? ` (literal ${quote(plan)})` : '';
   return `(version 1)
 (deny default)
 (allow process-exec process-fork process-info* sysctl-read file-map-executable)
@@ -132,8 +143,8 @@ export function sandboxProfile(
 (allow signal (target self))
 (allow file-read-metadata file-test-existence)
 (allow mach-lookup)
-(allow file-read* ${[...new Set(roots)].map((p) => `(subpath ${quote(p)})`).join(' ')} (literal "/") (subpath "/dev/fd") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random") (literal "/private/etc/passwd") (literal "/private/etc/localtime"))
-(allow file-write* (literal "/dev/null") (subpath ${quote(scratch)}) ${permissions.edits ? `(subpath ${quote(workspace)})` : ''})
+(allow file-read* ${[...new Set(roots)].map((p) => `(subpath ${quote(p)})`).join(' ')}${planFile} (literal "/") (subpath "/dev/fd") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random") (literal "/private/etc/passwd") (literal "/private/etc/localtime"))
+(allow file-write* (literal "/dev/null") (subpath ${quote(scratch)}) ${permissions.edits ? `(subpath ${quote(workspace)})` : ''}${planFile})
 ${skills.length ? `(deny file-write* ${[...new Set(skills.flatMap((s) => [s.path, s.root]))].map((p) => `(subpath ${quote(p)})`).join(' ')})` : ''}
 ${permissions.network && !worker ? '(allow network-outbound network-inbound)' : '(deny network*)'}
 (deny file-read* file-write* (subpath ${quote(commandBrokerRoot)}))
@@ -164,6 +175,7 @@ export class ToolService {
     maintenanceFile?: string,
     readonly attachmentAccess?: AttachmentAccess,
     attachmentTurnFile?: string,
+    readonly planState?: PlanStateLocation,
   ) {
     if (commandRuntime?.mode === 'trusted' && !Object.values(permissions).every(Boolean))
       throw new Error('Trusted commands require edits, commands, and network enabled');
@@ -202,6 +214,7 @@ export class ToolService {
       commandMode: this.commandMode,
       commandEndpoint: this.broker.endpoint,
       ...(this.attachmentAccess ? { attachmentStore: this.attachmentAccess.settings } : {}),
+      ...(this.planState ? { planState: this.planState } : {}),
     };
   }
   setMaintenance(active: boolean): void {
@@ -297,6 +310,24 @@ export class ToolService {
     if (!Object.hasOwn(toolInputs, tool)) throw new Error(`Unknown task tool: ${tool}`);
     const name = tool as ToolName;
     const input = toolInputs[name].parse(args);
+    // Plan mode is read at call time, so /plan and /plan off apply from the next call.
+    const plan = this.planState ? readPlanMode(this.planState.directory) : undefined;
+    const requested =
+      'path' in input && typeof input.path === 'string'
+        ? input.path.startsWith('~/')
+          ? join(homedir(), input.path.slice(2))
+          : input.path
+        : undefined;
+    const planFile =
+      plan !== undefined &&
+      (name === 'read_file' || name === 'write_file') &&
+      resolve(this.workspace, requested!) === plan
+        ? plan
+        : undefined;
+    if (plan !== undefined && name === 'write_file' && !planFile)
+      throw new Error(
+        `Plan mode is on: write_file can write only the attached plan ${plan}. Every other write is refused until the human runs /plan off.`,
+      );
     const required =
       name === 'write_file'
         ? 'edits'
@@ -305,10 +336,21 @@ export class ToolService {
           : name === 'fetch_url'
             ? 'network'
             : undefined;
-    if (required && !this.permissions[required])
+    if (required && !this.permissions[required] && !(planFile && name === 'write_file'))
       throw new Error(
         `Missing permission: permissions.${required}=true. Explain this to the human; a YAML config change and idle /reload are required. No temporary grant is available.`,
       );
+    let planRead: string | undefined;
+    if (planFile) {
+      checkedPlanPath(planFile, this.skillAccess);
+      const bytes = readPlan(planFile);
+      if (!bytes) throw new Error(`The plan file is missing: ${planFile}`);
+      planRead = planHash(bytes);
+      if (name === 'write_file' && planRead !== readAgentPlan(this.planState!).hash)
+        throw new Error(
+          'The plan changed since you last received or read it. Reread it with read_file, then retry the write.',
+        );
+    }
     if (signal?.aborted) throw new Error('Interrupted');
     const controller = new AbortController();
     this.controllers.add(controller);
@@ -415,7 +457,8 @@ export class ToolService {
       const commandInput = input as z.infer<typeof toolInputs.run_command>;
       if (!worker && this.commandRuntime?.endpoint)
         return await forwardCommand(this.commandRuntime.endpoint, commandInput, controller.signal);
-      if (!worker && this.commandMode === 'trusted') {
+      // Plan mode sends trusted commands through the sandbox, without account access.
+      if (!worker && this.commandMode === 'trusted' && plan === undefined) {
         const result = await runProcess('/bin/sh', ['-c', commandInput.command], {
           cwd: this.workspace,
           env: this.commandRuntime!.environment,
@@ -432,7 +475,14 @@ export class ToolService {
         '/usr/bin/sandbox-exec',
         [
           '-p',
-          sandboxProfile(this.workspace, this.permissions, this.scratch, worker, this.skillAccess),
+          sandboxProfile(
+            this.workspace,
+            plan === undefined ? this.permissions : { ...this.permissions, edits: false },
+            this.scratch,
+            worker,
+            this.skillAccess,
+            planFile,
+          ),
           command,
           ...args,
         ],
@@ -454,6 +504,7 @@ export class ToolService {
                     ? { ...input, path: join(homedir(), input.path.slice(2)) }
                     : input,
                 skillAccess: this.skillAccess,
+                ...(plan === undefined ? {} : { plan }),
               })
             : undefined,
         },
@@ -462,6 +513,13 @@ export class ToolService {
       if (result.code !== 0) throw new Error(result.stderr.trim() || 'Sandboxed file tool failed');
       const parsed = JSON.parse(result.stdout);
       if (parsed.error) throw new Error(parsed.error);
+      if (planFile && name === 'read_file') recordAgentPlan(this.planState!, planRead);
+      if (planFile && name === 'write_file')
+        recordAgentPlan(
+          this.planState!,
+          planHash((input as z.infer<typeof toolInputs.write_file>).text),
+          true,
+        );
       return parsed.result;
     } finally {
       signal?.removeEventListener('abort', abort);

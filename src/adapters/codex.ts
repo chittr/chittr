@@ -167,6 +167,8 @@ export class CodexAdapter implements AgentAdapter {
       { mode: commandMode(config), environment },
       undefined,
       attachments,
+      undefined,
+      agent.planState,
     );
   }
   async start(sessionId?: string): Promise<{ sessionId?: string; restored: boolean }> {

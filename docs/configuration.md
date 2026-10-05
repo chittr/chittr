@@ -154,6 +154,10 @@ Agents can't ask for a permission mid-conversation. They explain what's missing,
 | `sandboxed` | `commands: true`                                                    | In Chittr's macOS sandbox, limited to the workspace and the room's `edits` and `network` grants |
 | `trusted`   | All three permissions `true`, plus a trust grant for this workspace | As your user account, with no sandbox                                                           |
 
+### Plan mode overrides edits
+
+While a conversation is in [plan mode](usage.md#plan-mode), `write_file` can write the attached plan file and nothing else, whatever `edits` says. With `edits: false` agents can still write the plan; with `edits: true` they can't write anything else. `read_file` can also read the plan when it is outside the launch directory. Commands run sandboxed with workspace writes denied, and trusted commands run sandboxed too. `commands` and `network` otherwise keep their values. `/plan off` restores the configured permissions from the next tool call. Plan mode doesn't change your YAML, and turning it on or off doesn't restart agents.
+
 ## Trusted commands
 
 Sandboxed commands work for builds and tests that stay inside the workspace. They can't use your accounts. They can't read the rest of your home directory, and Chittr starts them with only `PATH`, `LANG` and `TMPDIR` set, so `HOME`, tokens and your SSH agent are missing. Homebrew's `bin` directory isn't on their `PATH`. Commands that rely on your logins, such as `gh pr create` or `git push` over SSH, fail.
@@ -193,6 +197,25 @@ Project config overrides permissions, so a project can switch trust off for its 
 ### Reloading and resuming
 
 Run `/reload` while idle after changing a grant. A mode change restarts participants with current tools and instructions, then restores the public conversation. Resume and `/sessions ID` recompute the mode from current settings and this process's launch flag. A saved conversation can't bring back an old grant or a previous launch's flag. Chittr captures the environment once at launch, so relaunch to pick up exported changes.
+
+## Plans
+
+`plans.location` chooses the folder where `/plan` creates [plan files](usage.md#plan-mode):
+
+```yaml
+plans:
+  location: user # the default
+```
+
+| Value                         | Folder                                     |
+| ----------------------------- | ------------------------------------------ |
+| `user`                        | `~/.agents/chittr/plans/<derived>/`        |
+| `directory`                   | `<launch directory>/.agents/chittr/plans/` |
+| An absolute path or `~/` path | `<path>/<derived>/`                        |
+
+`<derived>` is the launch directory's resolved path with each `/` replaced by `-`, for example `-Users-you-Projects-app`. Two launch directories whose paths derive the same folder share it. Chittr creates missing folders. Relative paths and other values fail config load. `--state-dir` doesn't move plans.
+
+The project's `plans` block replaces the user one, as the `instructions` block does. `/config` shows the effective value and the file that set it. The conversation saves its plan's resolved path, so changing `plans.location` affects only new plans. `/plan resume` lists the current folder's plans and also accepts a path to a plan anywhere else.
 
 ## Skills
 
