@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
-import { loadConfig, writeStarter, fingerprint, parseProviderSelection } from './config.js';
+import { loadConfig, writeStarter, fingerprint } from './config.js';
 import { SessionStore } from './store.js';
 import { RoomController } from './controller.js';
 import { WebUI } from './web.js';
 import { TerminalAttachments } from './ui/terminal-attachments.js';
 import { TerminalUI } from './ui/terminal.js';
 import { pickSession } from './ui/session-picker.js';
+import { pickProviders } from './ui/provider-picker.js';
 import { parseCliOptions } from './cli-options.js';
 import { runProcess, errorText } from './process.js';
 import { createAdapter } from './adapters/index.js';
 import type { Provider, RoomConfig } from './types.js';
-import { providerIds, providers as providerInfo } from './providers.js';
+import { supportedProviders, providers as providerInfo } from './providers.js';
 import { commandAccessSummary } from './command-access.js';
 import { version } from './version.js';
 import { readInstructionFile } from './instructions.js';
@@ -98,9 +99,9 @@ Resume and /sessions restore the destination brief with current YAML; /new has n
 brief. /reload updates YAML and keeps the saved brief. Reconnect and /compact keep
 the active brief. /config shows instruction sources. A brief cannot be edited in chat.
 `;
-async function detected(candidates: readonly Provider[] = providerIds): Promise<Provider[]> {
+async function detected(): Promise<Provider[]> {
   const results = await Promise.all(
-    candidates.map(async (name) => {
+    supportedProviders.map(async (name) => {
       try {
         const p = await runProcess(providerInfo[name].command, ['--version'], { timeout: 5000 });
         return p.code === 0 ? name : undefined;
@@ -118,22 +119,13 @@ async function setup(workspace: string): Promise<RoomConfig> {
     );
   const providers = await detected();
   if (!providers.length)
-    throw new Error('Install a supported CLI (codex, claude, grok, or agy) and sign in first.');
+    throw new Error('Install a supported CLI (codex, claude or grok) and sign in first.');
+  process.stdout.write('No Chittr config found.\n');
+  const selected = await pickProviders(providers);
+  if (!selected) throw new Error('Setup cancelled; no config was written.');
+  // The picker reads raw keypresses, so readline attaches to stdin only after it finishes.
   const prompt = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    process.stdout.write(`No Chittr config found. Detected: ${providers.join(', ')}.\n`);
-    let selected: Provider[];
-    while (true) {
-      const choice = await prompt.question(
-        'Default agents to enable (comma-separated; choose at least one): ',
-      );
-      try {
-        selected = parseProviderSelection(choice, providers);
-        break;
-      } catch (error) {
-        process.stdout.write(`${errorText(error)}\n`);
-      }
-    }
     const name = (await prompt.question('Your display name [You]: ')).trim() || 'You';
     const answer = (
       await prompt.question(
@@ -156,7 +148,6 @@ async function doctor(
   workspace: string,
   json: boolean,
 ): Promise<boolean> {
-  const doctorProviders: readonly Provider[] = ['codex', 'claude', 'grok'];
   const effective = config ?? {
     workspace,
     permissions: { edits: false, commands: false, network: false },
@@ -164,7 +155,7 @@ async function doctor(
     sources: [],
     provenance: {},
     agents: Object.fromEntries(
-      (await detected(doctorProviders)).map((provider) => [
+      (await detected()).map((provider) => [
         provider,
         {
           id: provider,
@@ -178,7 +169,7 @@ async function doctor(
   };
   const results = await Promise.all(
     Object.values(effective.agents)
-      .filter((a) => a.enabled && doctorProviders.includes(a.provider))
+      .filter((a) => a.enabled && supportedProviders.includes(a.provider))
       .map(async (agent) => {
         const adapter = createAdapter(agent, effective, launchEnvironment);
         try {

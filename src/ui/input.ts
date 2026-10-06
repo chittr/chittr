@@ -219,6 +219,19 @@ export function cleanText(text: string): string {
     .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
     .replaceAll('\t', '    ');
 }
+/** Fit plain text within `width` terminal cells, ending with an ellipsis when cut. */
+export function clip(text: string, width: number): string {
+  if (stringWidth(text) <= width) return text;
+  let result = '',
+    cells = 0;
+  for (const { segment } of segmenter.segment(text)) {
+    const size = stringWidth(segment);
+    if (cells + size > width - 1) break;
+    result += segment;
+    cells += size;
+  }
+  return result + '…';
+}
 export interface InputRow {
   start: number;
   end: number;

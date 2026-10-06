@@ -266,14 +266,6 @@ function resolveInstructions(
     );
   }
 }
-export function parseProviderSelection(choice: string, installed: Provider[]): Provider[] {
-  const selected = [...new Set(choice.split(/[,\s]+/).filter(Boolean))];
-  if (!selected.length)
-    throw new ConfigError('Select at least one installed CLI; none are selected by default');
-  if (selected.some((provider) => !installed.includes(provider as Provider)))
-    throw new ConfigError('Select only detected providers: ' + installed.join(', '));
-  return selected as Provider[];
-}
 export function writeStarter(providers: Provider[], home = homedir(), humanName = 'You'): string {
   if (!providers.length) throw new ConfigError('Select at least one installed CLI');
   const name = displayName.parse(humanName);

@@ -1,6 +1,5 @@
-import stringWidth from 'string-width';
 import type { SessionSummary } from '../store.js';
-import { cleanText, InputParser, previousBoundary, type Key } from './input.js';
+import { cleanText, clip, InputParser, previousBoundary, type Key } from './input.js';
 
 type Input = Pick<
   NodeJS.ReadStream,
@@ -8,22 +7,9 @@ type Input = Pick<
 >;
 type Output = Pick<NodeJS.WriteStream, 'isTTY' | 'columns' | 'rows' | 'write' | 'on' | 'off'>;
 const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
-const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 function singleLine(text: string): string {
   return cleanText(text).replace(/\s+/g, ' ').trim();
-}
-function clip(text: string, width: number): string {
-  if (stringWidth(text) <= width) return text;
-  let result = '',
-    cells = 0;
-  for (const { segment } of segmenter.segment(text)) {
-    const size = stringWidth(segment);
-    if (cells + size > width - 1) break;
-    result += segment;
-    cells += size;
-  }
-  return result + '…';
 }
 
 /** Select from this workspace's saved chats before starting any providers. */
