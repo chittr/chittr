@@ -2,17 +2,18 @@
 
 Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://semver.org); before 1.0, a minor version can change behavior.
 
-## [Unreleased]
+## [0.3.0] - 2026-10-06
 
 ### Added
 
-- The browser sidebar has a **System / Light / Dark** theme picker. **System** follows the operating system setting and is the default. A Light or Dark choice applies before the page first draws and is remembered across launches in a `chittr-theme` cookie, because each launch uses a new port and per-port browser storage would forget it.
-- `chittr update` updates a verified npm-global installation to npm's latest release,
-  with version and Node compatibility checks, streamed npm output and a backup reminder.
+- Room instructions. Set top-level `instructions.sources` in a user or project config to give every agent in the room the same guidance. Agent-specific instructions still apply alongside them. A project config's `instructions` block replaces the user one, and `instructions: {}` clears it. Each instruction file can be up to 1 MiB, and `/config` shows which config file supplied the room instructions. ([#10])
+- `chittr --instructions-file PATH` gives a new conversation a brief that every agent receives. Chittr reads the file once, before first-run setup, and stops the launch if it is missing, unreadable or over 1 MiB. The text is saved with the conversation before any agent starts, so resuming restores it even after the file changes or is deleted. Idle `/reload` keeps the brief, `/new` starts without one and `/config` shows where it came from. The flag works with `--new` and `--web` and is rejected with `resume`, `--session` and `doctor`. The prompt tells agents that the brief takes precedence over room instructions, and room instructions over agent instructions. ([#10])
+- The browser sidebar has a **System / Light / Dark** theme picker. **System** follows the operating system setting and is the default. A Light or Dark choice applies before the page first draws and is remembered across launches in a `chittr-theme` cookie, because each launch uses a new port and per-port browser storage would forget it. ([#11])
+- `chittr update` updates a verified npm-global installation to npm's latest release, with version and Node compatibility checks, streamed npm output and a backup reminder. ([#12])
 
 ### Changed
 
-- First-time setup picks default agents from a checklist instead of a comma-separated list. It offers the supported CLIs it detects (Codex, Claude and Grok), all checked; ↑/↓ moves, Space toggles and Enter confirms. Esc cancels setup without writing a config. Setup no longer offers Antigravity, which is outside this preview's support scope.
+- First-time setup picks default agents from a checklist instead of a comma-separated list. It offers the supported CLIs it detects (Codex, Claude and Grok), all checked; ↑/↓ moves, Space toggles and Enter confirms. Esc cancels setup without writing a config. Setup no longer offers Antigravity, which is outside this preview's support scope. ([#19])
 
 ## [0.2.0] - 2026-10-02
 
@@ -35,9 +36,14 @@ Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://
 
 First public preview.
 
+[0.3.0]: https://github.com/chittr/chittr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chittr/chittr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/chittr/chittr/tree/v0.1.0
 [#3]: https://github.com/chittr/chittr/pull/3
 [#5]: https://github.com/chittr/chittr/pull/5
 [#6]: https://github.com/chittr/chittr/pull/6
 [#7]: https://github.com/chittr/chittr/pull/7
+[#10]: https://github.com/chittr/chittr/pull/10
+[#11]: https://github.com/chittr/chittr/pull/11
+[#12]: https://github.com/chittr/chittr/pull/12
+[#19]: https://github.com/chittr/chittr/pull/19

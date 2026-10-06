@@ -45,7 +45,7 @@ function rpc(method, params) {
 }
 try {
   const init = await rpc('initialize', {
-    clientInfo: { name: 'chittr', version: '0.2.0' },
+    clientInfo: { name: 'chittr', version: '0.3.0' },
     capabilities: { experimentalApi: true },
   });
   proc.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
