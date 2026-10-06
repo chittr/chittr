@@ -6,6 +6,9 @@ export const providers: Record<Provider, { label: string; command: string }> = {
   grok: { label: 'Grok Build', command: 'grok' },
   antigravity: { label: 'Antigravity CLI', command: 'agy' },
 };
+// The providers this preview supports. Setup offers and doctor checks only these;
+// Antigravity can still be configured in YAML.
+export const supportedProviders: readonly Provider[] = ['codex', 'claude', 'grok'];
 
 // CLI-level vocabulary. Individual models can advertise a smaller set at startup.
 export const providerEfforts: Record<Provider, readonly string[]> = {

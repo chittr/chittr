@@ -87,7 +87,7 @@ chittr update     # update this npm-global installation after closing rooms and 
 ```
 
 When no config exists, interactive setup offers to create `~/.agents/chittr.yaml` and asks
-which installed providers to enable. The launch directory is the room's task workspace;
+which supported providers to enable. The launch directory is the room's task workspace;
 Chittr does not search upward for a Git root or project config. Then see
 [use Chittr](docs/usage.md) and [configure Chittr](docs/configuration.md).
 

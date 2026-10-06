@@ -10,6 +10,10 @@ Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://
 - `chittr update` updates a verified npm-global installation to npm's latest release,
   with version and Node compatibility checks, streamed npm output and a backup reminder.
 
+### Changed
+
+- First-time setup picks default agents from a checklist instead of a comma-separated list. It offers the supported CLIs it detects (Codex, Claude and Grok), all checked; ↑/↓ moves, Space toggles and Enter confirms. Esc cancels setup without writing a config. Setup no longer offers Antigravity, which is outside this preview's support scope.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

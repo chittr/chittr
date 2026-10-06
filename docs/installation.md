@@ -28,10 +28,11 @@ Use `chittr --help` for command options. If your shell cannot find `chittr`, add
 [user-writable npm installation](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally)
 instead of running Chittr as root.
 
-First-time setup requires an interactive terminal and asks which installed
-providers to enable. Choose only Codex, Claude and Grok for this preview; leave
-Antigravity unselected if it appears. It creates `~/.agents/chittr.yaml` with file
-inspection and discussion permissions. Commands, edits and network access start disabled.
+First-time setup requires an interactive terminal and lists the supported CLIs it
+detects (Codex, Claude and Grok), all checked. Move with ↑/↓, toggle with Space and
+confirm with Enter. Setup does not offer Antigravity. It creates
+`~/.agents/chittr.yaml` with file inspection and discussion permissions. Commands,
+edits and network access start disabled.
 The project configuration is `<launch directory>/.agents/chittr.yaml`.
 Project configuration can override permissions. Inspect it before launching in an
 unfamiliar workspace. After setup, `chittr doctor` checks configured providers and

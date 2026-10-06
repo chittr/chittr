@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { loadConfig, writeStarter, parseProviderSelection } from '../src/config.js';
+import { loadConfig, writeStarter } from '../src/config.js';
 const roots: string[] = [];
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'chittr-config-'));
@@ -288,13 +288,7 @@ it.each(['agents', 'defaultAgents'])(
   },
 );
 
-it('requires explicit setup selections and validates them against installed CLIs', () => {
-  expect(() => parseProviderSelection('', ['codex', 'claude'])).toThrow(
-    'none are selected by default',
-  );
-  expect(() => parseProviderSelection(' , ', ['codex'])).toThrow('Select at least one');
-  expect(() => parseProviderSelection('grok', ['codex'])).toThrow('only detected');
-  expect(parseProviderSelection('claude, claude', ['codex', 'claude'])).toEqual(['claude']);
+it('requires at least one provider in a starter config', () => {
   const { home } = fixture();
   expect(() => writeStarter([], home)).toThrow('Select at least one');
 });
