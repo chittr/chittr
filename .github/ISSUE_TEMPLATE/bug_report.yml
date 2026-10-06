@@ -47,7 +47,7 @@ body:
     attributes:
       label: AI Chat version or commit
       description: The `version` field from `package.json`, or the commit you are running.
-      placeholder: 0.2.0 (commit 3315488)
+      placeholder: 0.3.0 (commit 3315488)
     validations:
       required: true
   - type: input

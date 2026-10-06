@@ -59,11 +59,11 @@ process before replacing an installation or copying storage.
 
 Close every running Chittr process first. Uninstall removes the executable and
 package, while configuration and conversation data remain in place. To reinstall
-the identified 0.2.0 release:
+the identified 0.3.0 release:
 
 ```sh
 npm uninstall -g @chittr/cli
-npm install -g @chittr/cli@0.2.0
+npm install -g @chittr/cli@0.3.0
 ```
 
 Reopen from the same canonical workspace directory using the same storage base.
@@ -162,7 +162,7 @@ package automatically. See [reinstall](#reinstall-or-uninstall) and
 [backup recovery](#back-up-and-restore) before retrying.
 
 If a release fails, quit Chittr and preserve its data. Install a known working
-version, for example `npm install -g @chittr/cli@0.1.0` when 0.1.0 is the version
+version, for example `npm install -g @chittr/cli@0.2.0` when 0.2.0 is the version
 you previously used successfully. With no known working release, keep your backup
 and wait for a fixed version. Deprecating an npm version does not repair copies
 already installed; users still need to install a replacement.
