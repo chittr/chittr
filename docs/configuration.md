@@ -82,6 +82,19 @@ Chittr supplies Codex's `model_reasoning_effort` and turn effort, Claude's `--ef
 
 After editing `effort`, run `/reload` while all agents are idle. Only affected participants restart with fresh provider sessions and the saved public conversation, following the same lifecycle as a model change. `/config` shows each participant's configured effort and its source; `provider default` means Chittr did not override it.
 
+## Turn time limit
+
+Each agent turn has a time limit, 10 minutes by default. The clock starts when the turn starts and does not reset while the agent works. When a turn runs past it, Chittr interrupts the turn and keeps its pending messages; the room notice explains how to retry them. Set the limit in whole minutes, from 1 to 1440:
+
+```yaml
+conversation:
+  turn_timeout_minutes: 30
+```
+
+The launch directory's `.agents/chittr.yaml` takes precedence, then `~/.agents/chittr.yaml`, then the 10-minute default. Like the other `conversation` settings, it merges field by field, so a project can set `follow_up_turns` and still inherit your limit. The limit applies to agent turns for every provider. Context maintenance keeps its built-in limits: 10 minutes for each step of the catch-up after `/reconnect`, and each provider's own limit for compaction.
+
+After editing it, run `/reload` while all agents are idle. The next turn uses the new limit without restarting any participant; a turn already running keeps the limit it started with. `/config` shows the effective value as `turnTimeoutMinutes`.
+
 ## Several providers in one room
 
 See [the three-provider project example](../examples/three-providers.yaml) to use Codex,

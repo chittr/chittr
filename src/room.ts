@@ -8,7 +8,12 @@ import {
   contextBudgets,
   isMaintaining,
 } from './checkpoint.js';
-import { MaintenanceOutputError, normalizeOutcome, turnPrompt } from './protocol.js';
+import {
+  MaintenanceOutputError,
+  defaultTurnTimeoutMinutes,
+  normalizeOutcome,
+  turnPrompt,
+} from './protocol.js';
 import {
   unansweredQuestions,
   freezeLegacyQuestions,
@@ -850,6 +855,7 @@ export class Room extends EventEmitter {
       history: structuredClone(this.session.messages),
       participants: this.enabledNames(),
       humanName: this.config.humanName ?? 'You',
+      timeoutMinutes: this.config.turnTimeoutMinutes ?? defaultTurnTimeoutMinutes,
     };
     // schedule() already failed unsupported images for this recipient, so an
     // image reaching dispatch with a closed gate is an invariant failure. It must

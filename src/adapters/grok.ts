@@ -21,6 +21,7 @@ import {
   parseOutcomes,
   previewText,
   turnPrompt,
+  turnTimeout,
 } from '../protocol.js';
 import { IsolatedRuntime, roomToolNames } from './isolated.js';
 import { effortError } from '../providers.js';
@@ -561,7 +562,7 @@ ${JSON.stringify(outputSchema)}
           'attachment-limit',
           'Images and conversation context exceed the provider frame limit',
         );
-      const result = await proc.rpc('session/prompt', parameters, 600000);
+      const result = await proc.rpc('session/prompt', parameters, turnTimeout(input).ms);
       if (this.policyError) throw this.policyError;
       if (result.stopReason !== 'end_turn')
         throw new Error(grokStopMessage(result, this.deniedTool));

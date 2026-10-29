@@ -235,6 +235,8 @@ decision under #37. This contract work does not fix them.
   `start()` and cleared on `close()`; neither reads the CLI version. A handoff
   that the live session cannot complete records `Continuation note unavailable:
 <reason>` and keeps the replacement transaction. This is not an image gate.
-- Turn and compaction timeouts are per-adapter constants, not a shared definition.
+- Compaction timeouts are per-adapter constants, not a shared definition. Task
+  turns take their limit from `TurnInput.timeoutMinutes` through `turnTimeout`
+  in `src/protocol.ts`; maintenance runs pass none and keep its 10-minute default.
 - Post-`close()` behavior is unspecified beyond repeated close, unavailable
   image paths and revoked old authority as checked by the suite.

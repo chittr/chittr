@@ -19,7 +19,14 @@ import type {
   AdapterEvent,
 } from '../types.js';
 import { JsonLinesProcess, errorText, runProcess } from '../process.js';
-import { instructions, outputSchema, parseOutcomes, previewText, turnPrompt } from '../protocol.js';
+import {
+  instructions,
+  outputSchema,
+  parseOutcomes,
+  previewText,
+  turnPrompt,
+  turnTimeout,
+} from '../protocol.js';
 import { ToolService, toolSpecs } from '../tools.js';
 import { randomUUID } from 'node:crypto';
 import { realpathSync, existsSync, readFileSync } from 'node:fs';
@@ -665,12 +672,15 @@ export class CodexAdapter implements AgentAdapter {
               : new Error(m.params.turn.error?.message || `Codex turn ${m.params.turn.status}`),
           );
       };
+      const turnLimit = turnTimeout(input);
       const timeout = setTimeout(() => {
         void this.interrupt();
         finish(
-          new Error('Codex turn exceeded 10 minutes; pending messages require explicit retry'),
+          new Error(
+            `Codex turn exceeded ${turnLimit.label}; pending messages require explicit retry`,
+          ),
         );
-      }, 600000);
+      }, turnLimit.ms);
       proc.on('message', listener);
       proc.on('disconnect', disconnected);
       signal.addEventListener('abort', abort, { once: true });

@@ -4,6 +4,12 @@ import type { AgentConfig, RoomConfig, TurnInput, Outcome } from './types.js';
 import { skillInstructions } from './skills.js';
 import { commandAccessSummary, commandMode } from './command-access.js';
 import { unansweredQuestions } from './questions.js';
+export const defaultTurnTimeoutMinutes = 10;
+/** A task turn's wall-clock limit. Maintenance input carries none and keeps the default. */
+export function turnTimeout(input: TurnInput): { ms: number; label: string } {
+  const minutes = input.timeoutMinutes ?? defaultTurnTimeoutMinutes;
+  return { ms: minutes * 60000, label: minutes === 1 ? '1 minute' : `${minutes} minutes` };
+}
 const choicesSchema = z
   .array(
     z

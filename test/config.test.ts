@@ -388,6 +388,35 @@ it('inherits the human name from the user config and records explicit project ov
     provenance: { 'human.name': realpathSync(projectPath) },
   });
 });
+it('takes the turn time limit from the project, then the user config, then a 10-minute default', () => {
+  const { home, project } = fixture();
+  const userPath = join(home, '.agents/chittr.yaml');
+  const projectPath = join(project, '.agents/chittr.yaml');
+  const roster = 'agents: {codex: {provider: codex}}\n';
+  writeFileSync(projectPath, `version: 1\n${roster}`);
+  const defaulted = loadConfig(project, home)!;
+  expect(defaulted.turnTimeoutMinutes).toBe(10);
+  expect(defaulted.provenance['conversation.turn_timeout_minutes']).toBeUndefined();
+  writeFileSync(userPath, 'version: 1\nconversation: {turn_timeout_minutes: 20}\n');
+  writeFileSync(projectPath, `version: 1\nconversation: {follow_up_turns: 3}\n${roster}`);
+  expect(loadConfig(project, home)).toMatchObject({
+    followUpTurns: 3,
+    turnTimeoutMinutes: 20,
+    provenance: { 'conversation.turn_timeout_minutes': userPath },
+  });
+  writeFileSync(projectPath, `version: 1\nconversation: {turn_timeout_minutes: 30}\n${roster}`);
+  expect(loadConfig(project, home)).toMatchObject({
+    turnTimeoutMinutes: 30,
+    provenance: { 'conversation.turn_timeout_minutes': realpathSync(projectPath) },
+  });
+  for (const invalid of ['0', '1441', '1.5', 'ten']) {
+    writeFileSync(
+      projectPath,
+      `version: 1\nconversation: {turn_timeout_minutes: ${invalid}}\n${roster}`,
+    );
+    expect(() => loadConfig(project, home)).toThrow('turn_timeout_minutes');
+  }
+});
 it('keeps configurations without a human name valid and defaults the label to You', () => {
   const { home, project } = fixture();
   writeFileSync(

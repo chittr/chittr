@@ -17,6 +17,7 @@ import { formatContextUsage } from './context-usage.js';
 import { questionDetails } from './questions.js';
 import { projectRoom, providerDefault, type RoomSnapshot } from './snapshot.js';
 import { parseReplyDraft } from './reply.js';
+import { defaultTurnTimeoutMinutes } from './protocol.js';
 
 /** A queued action refused because the selected conversation is no longer the one it named. */
 export class ConversationChangedError extends Error {
@@ -511,6 +512,7 @@ export class RoomController extends EventEmitter {
       commandAccessDescription,
       skills: config.skills ?? { enabled: true },
       followUpTurns: config.followUpTurns,
+      turnTimeoutMinutes: config.turnTimeoutMinutes ?? defaultTurnTimeoutMinutes,
       instructions: {
         room: {
           source: config.provenance.instructions ?? null,

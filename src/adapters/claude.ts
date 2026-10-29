@@ -19,6 +19,7 @@ import {
   parseOutcomes,
   previewText,
   turnPrompt,
+  turnTimeout,
 } from '../protocol.js';
 import { builtFile, ToolService } from '../tools.js';
 import { effortError } from '../providers.js';
@@ -714,12 +715,15 @@ export class ClaudeAdapter implements AgentAdapter {
           finish(m.is_error ? new Error(m.errors?.join('; ') || m.result || m.subtype) : undefined);
         }
       };
+      const turnLimit = turnTimeout(input);
       const timer = setTimeout(() => {
         void this.interrupt();
         finish(
-          new Error('Claude turn exceeded 10 minutes; pending messages require explicit retry'),
+          new Error(
+            `Claude turn exceeded ${turnLimit.label}; pending messages require explicit retry`,
+          ),
         );
-      }, 600000);
+      }, turnLimit.ms);
       proc.on('message', listener);
       proc.on('disconnect', disconnected);
       signal.addEventListener('abort', abort, { once: true });
