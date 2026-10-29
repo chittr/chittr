@@ -28,6 +28,7 @@ import {
   parseOutcomes,
   previewText,
   turnPrompt,
+  turnTimeout,
 } from '../protocol.js';
 import { builtFile, toolSpecs } from '../tools.js';
 import { commandMode } from '../command-access.js';
@@ -629,12 +630,15 @@ ${JSON.stringify(toolSpecs(commandMode(this.config)))}
           );
         }
       };
+      const turnLimit = turnTimeout(input);
       const timer = setTimeout(
         () =>
           fail(
-            new Error('Antigravity turn exceeded 10 minutes; explicitly retry pending messages'),
+            new Error(
+              `Antigravity turn exceeded ${turnLimit.label}; explicitly retry pending messages`,
+            ),
           ),
-        600000,
+        turnLimit.ms,
       );
       proc.on('message', listener);
       proc.on('disconnect', fail);

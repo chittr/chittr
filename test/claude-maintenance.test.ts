@@ -385,3 +385,51 @@ it('normalizes control whitespace only in the outgoing Claude compact command', 
   result({ result: 'Not enough messages to compact.' });
   await pending;
 });
+
+it('times out a Claude turn at its configured limit and interrupts it', async () => {
+  vi.useFakeTimers();
+  try {
+    const { adapter, wire } = setup();
+    let failure: string | undefined;
+    const done = adapter
+      .run(
+        { messages: [], context: [], participants: [], timeoutMinutes: 2 },
+        () => {},
+        new AbortController().signal,
+      )
+      .catch((error: Error) => {
+        failure = error.message;
+      });
+    await vi.advanceTimersByTimeAsync(119999);
+    expect(failure).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+    expect(failure).toBe('Claude turn exceeded 2 minutes; pending messages require explicit retry');
+    expect(wire.sent.some((m) => m.request?.subtype === 'interrupt')).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('keeps the 10-minute default for Claude maintenance runs', async () => {
+  vi.useFakeTimers();
+  try {
+    const { adapter } = setup();
+    let failure: string | undefined;
+    const done = adapter
+      .maintain(
+        { id: 'operation', kind: 'seed', prompt: 'Accept seed' },
+        new AbortController().signal,
+      )
+      .catch((error: Error) => {
+        failure = error.message;
+      });
+    await vi.advanceTimersByTimeAsync(599999);
+    expect(failure).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+    expect(failure).toContain('Claude turn exceeded 10 minutes');
+  } finally {
+    vi.useRealTimers();
+  }
+});

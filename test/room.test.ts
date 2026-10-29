@@ -613,6 +613,22 @@ it('applies a changed human name on the next turn without restarting agents or r
   expect(room.session.messages.every((message) => message.author === 'human')).toBe(true);
   await room.close();
 });
+it('gives each turn the configured time limit and applies a reloaded limit to the next turn', async () => {
+  const { room, adapters, config } = setup();
+  await room.start();
+  room.send('@codex first');
+  await tick();
+  const codex = adapters.codex!;
+  expect(codex.inputs[0]!.timeoutMinutes).toBe(10);
+  codex.finish();
+  await tick();
+  await room.reload({ ...config, turnTimeoutMinutes: 25 });
+  expect(adapters.codex).toBe(codex);
+  room.send('@codex second');
+  await tick();
+  expect(codex.inputs[1]!.timeoutMinutes).toBe(25);
+  await room.close();
+});
 it('uses agent keys for two Codex participants in routing, labels and turn context', async () => {
   const { room, adapters, config } = setup();
   config.agents = Object.fromEntries(

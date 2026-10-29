@@ -2,6 +2,12 @@
 
 Notable changes to `@chittr/cli`. Versions follow [Semantic Versioning](https://semver.org); before 1.0, a minor version can change behavior.
 
+## [Unreleased]
+
+### Added
+
+- `conversation.turn_timeout_minutes` sets how long an agent turn may run before Chittr interrupts it and keeps its messages for retry. A project config overrides the user config, and the default stays 10 minutes. Idle `/reload` applies a change to the next turn without restarting agents, and `/config` shows the effective value. Context maintenance, such as the catch-up after `/reconnect` or compaction, keeps its built-in limits.
+
 ## [0.3.0] - 2026-10-06
 
 ### Added

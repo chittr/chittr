@@ -9,6 +9,7 @@ import { effortError, providerIds } from './providers.js';
 import { discoverSkills } from './skills.js';
 import { resolveCommandAccess } from './command-access.js';
 import { readInstructionFile } from './instructions.js';
+import { defaultTurnTimeoutMinutes } from './protocol.js';
 
 const displayName = z
   .string()
@@ -64,7 +65,10 @@ const schema = z
     human: z.object({ name: displayName.optional() }).strict().optional(),
     skills: z.object({ enabled: z.boolean().optional() }).strict().optional(),
     conversation: z
-      .object({ follow_up_turns: z.number().int().min(1).max(1000).optional() })
+      .object({
+        follow_up_turns: z.number().int().min(1).max(1000).optional(),
+        turn_timeout_minutes: z.number().int().min(1).max(1440).optional(),
+      })
       .strict()
       .optional(),
     permissions: z
@@ -110,6 +114,7 @@ export function loadConfig(
     permissions: { edits: false, commands: false, network: false },
     skills: { enabled: true },
     followUpTurns: 8,
+    turnTimeoutMinutes: defaultTurnTimeoutMinutes,
     agents: {},
     sources: [],
     provenance: {},
@@ -171,6 +176,10 @@ export function loadConfig(
       if (layer.conversation?.follow_up_turns !== undefined) {
         config.followUpTurns = layer.conversation.follow_up_turns;
         config.provenance['conversation.follow_up_turns'] = path;
+      }
+      if (layer.conversation?.turn_timeout_minutes !== undefined) {
+        config.turnTimeoutMinutes = layer.conversation.turn_timeout_minutes;
+        config.provenance['conversation.turn_timeout_minutes'] = path;
       }
       for (const [key, value] of Object.entries(layer.permissions || {})) {
         config.permissions[key as keyof typeof config.permissions] = value;

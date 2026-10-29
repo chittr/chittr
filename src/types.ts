@@ -46,6 +46,7 @@ export interface RoomConfig {
   commandAccess?: CommandAccess;
   skills?: { enabled: boolean };
   followUpTurns: number;
+  turnTimeoutMinutes?: number;
   agents: Record<string, AgentConfig>;
   sources: string[];
   provenance: Record<string, string>;
@@ -136,6 +137,7 @@ export interface TurnInput {
   humanName?: string;
   summary?: string;
   history?: Message[];
+  timeoutMinutes?: number;
 }
 export interface MaintenanceRequest {
   id: string;
